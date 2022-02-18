@@ -54,12 +54,10 @@ class UwbCalibrate(object):
         assert(my_data[0,1] == dict["slave_id"])
 
         gt = np.array([])
-        tx1 = np.array([])
-        rx1 = np.array([])
-        tx2 = np.array([])
-        rx2 = np.array([])
-        tx3 = np.array([])
-        rx3 = np.array([])
+        Ra1 = np.array([])
+        Ra2 = np.array([])
+        Db1 = np.array([])
+        Db2 = np.array([])
 
         # Average the static intervals if required
         if self.static is True and self.average is True:
@@ -74,13 +72,18 @@ class UwbCalibrate(object):
                 # Ground truth
                 gt = np.append(gt, np.mean(my_data[idx_beg:idx_end,3]))
 
-                # Time stamps TODO: FIX THIS, USE DELTAS
-                tx1 = np.append(tx1, np.mean(my_data[idx_beg:idx_end,4]))
-                rx1 = np.append(rx1, np.mean(my_data[idx_beg:idx_end,5]))
-                tx2 = np.append(tx2, np.mean(my_data[idx_beg:idx_end,6]))
-                rx2 = np.append(rx2, np.mean(my_data[idx_beg:idx_end,7]))
-                tx3 = np.append(tx3, np.mean(my_data[idx_beg:idx_end,8]))
-                rx3 = np.append(rx3, np.mean(my_data[idx_beg:idx_end,9]))
+                # Time stamps 
+                tx1 = my_data[idx_beg:idx_end,4]
+                rx1 = my_data[idx_beg:idx_end,5]
+                tx2 = my_data[idx_beg:idx_end,6]
+                rx2 = my_data[idx_beg:idx_end,7]
+                tx3 = my_data[idx_beg:idx_end,8]
+                rx3 = my_data[idx_beg:idx_end,9]
+
+                Ra1 = np.append(Ra1, np.mean(rx2 - tx1))
+                Ra2 = np.append(Ra2, np.mean(rx3 - rx2))
+                Db1 = np.append(Db1, np.mean(tx2 - rx1))
+                Db2 = np.append(Db2, np.mean(tx3 - tx2))
 
         elif self.static is True: # Otherwise, average out only the ground truth if static 
             gt = my_data[:,3]*0 + np.mean(my_data[:,3])
@@ -92,14 +95,17 @@ class UwbCalibrate(object):
             tx3 = my_data[:,8]
             rx3 = my_data[:,9]
 
+            Ra1 = rx2 - tx1
+            Ra2 = rx3 - rx2
+            Db1 = tx2 - rx1
+            Db2 = tx3 - tx2
+
         # Record ground truth and recorded time-stamps
         dict['gt'] = gt
-        dict['tx1'] = tx1
-        dict['rx1'] = rx1
-        dict['tx2'] = tx2
-        dict['rx2'] = rx2
-        dict['tx3'] = tx3
-        dict['rx3'] = rx3
+        dict['Ra1'] = Ra1
+        dict['Ra2'] = Ra2
+        dict['Db1'] = Db1
+        dict['Db2'] = Db2
 
         return dict
 
@@ -118,14 +124,10 @@ class UwbCalibrate(object):
         """
         
         """
-        tx2 = data["tx2"]
-        tx3 = data["tx3"]
-        rx2 = data["rx2"]
-        rx3 = data["rx3"]
+        Ra2 = data["Ra2"]
+        Db2 = data["Db2"]
 
-        num = rx3 - rx2
-        den = tx3 - tx2
-        return num/den
+        return Ra2/Db2
 
     def _setup_A_matrix(self,K,idx_0,idx_1):
         """
@@ -143,12 +145,10 @@ class UwbCalibrate(object):
         
         """
         gt = data["gt"]
-        tx1 = data["tx1"]
-        tx2 = data["tx2"]
-        rx1 = data["rx1"]
-        rx2 = data["rx2"]
+        Ra1 = data["Ra1"]
+        Db1 = data["Db1"]
 
-        b = 1/self._c*gt*1e9 - 0.5*(rx2-tx1) - 0.5*K*(rx1-tx2)
+        b = 1/self._c*gt*1e9 - 0.5*(Ra1) + 0.5*K*(Db1)
 
         return np.reshape(b, (len(K),1))
 
