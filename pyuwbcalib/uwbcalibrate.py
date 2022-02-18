@@ -4,15 +4,33 @@ from sympy import rot_axis2
 
 class UwbCalibrate(object):
     """
-    board_ids must be in order of [filename_1 initializer, filename_2 initializer, last guy]
-    these will be referred to as i j and k
+    Object to handle calibration for the DECAR/MRASL UWB modules.
+
+    PARAMETERS:
+    -----------
+    filename_1: str
+        Relative address of the file containing the timestamps of the TWR instances initiated
+        by the first board (hereafter referred to as "board i").
+    filename_2: str
+        Relative address of the file containing the timestamps of the TWR instances initiated
+        by the second board (hereafter referred to as "board j").
+    board_ids: list of ints
+        List of IDs of the three boards involved in the calibration procedure.
+        The order is as follows:
+            1) TWR initializer in filename_1 (board i).
+            2) TWR initializer in filename_2 (board j).
+            3) The board that never initialized a TWR instance (board k).
+    average: bool
+        Flag to indicate whether measurements from static intervals should be averaged out.
+    static: bool
+        Flag to indicate whether the calibration experiment was done with static intervals.
     """
 
     _c = 299702547 # speed of light
 
     def __init__(self, filename_1, filename_2, board_ids, average=True, static=True):
         """
-        
+        Constructor
         """
         self.files = [filename_1, filename_2]
         self.board_ids = board_ids
@@ -35,7 +53,35 @@ class UwbCalibrate(object):
 
     def _extract_data(self, filename, master_idx, slave_idx):
         """
-        
+        Reads the stored data and stores it in a dictionary for further processing.
+
+        PARAMETERS:
+        -----------
+        filename: str
+            Relative address of the file containing the timestamps of the TWR instances initiated
+            by the board referred to here as the master.
+        master_idx: int
+            The index of the master board (initiator) in self.board_ids.
+        slave_idx: int
+            The index of the slave board in self.board_ids.
+
+        RETURNS:
+        --------
+        dict: A dictionary with the following fields 
+            master_id: int
+                ID of the master board.
+            slave_id: int
+                ID of the slave board.
+            gt: np.array
+                Ground truth data.
+            Ra1: np.array
+                The delta rx2-tx1 in the master board's clock.
+            Ra2: np.array
+                The delta rx3-rx2 in the master board's clock.
+            Db1: np.array
+                The delta tx2-rx1 in the slave board's clock.
+            Db2: np.array
+                The delta tx3-tx2 in the slave board's clock.
         """
         dict = {"master_id": self.board_ids[master_idx], "slave_id": self.board_ids[slave_idx]}
 
@@ -111,7 +157,16 @@ class UwbCalibrate(object):
 
     def _find_mocap_gaps(self,mocap_ts):
         """
-        
+        Finds time gaps in the Mocap data to indicate a change in the static formation.
+
+        PARAMETERS:
+        -----------
+        mocap_ts: np.array
+            The timestamps recorded from the Mocap.
+
+        RETURNS:
+        --------
+        list of ints: The indices of the measurements corresponding to the beginning of a new formation.
         """
         diff_ts = np.abs(mocap_ts[1:] - mocap_ts[:-1])
         gap = diff_ts > 10E7
@@ -120,30 +175,73 @@ class UwbCalibrate(object):
 
         return gap_idx.tolist()
 
-    def _calculate_skew_gain(self,data):
+    def _calculate_skew_gain(self,master_idx,slave_idx):
         """
-        
+        Calculates the K parameter given by Ra2/Db2.
+
+        PARAMETERS:
+        -----------
+        master_idx: int
+            The index of the master board (initiator) in self.board_ids.
+        slave_idx: int
+            The index of the slave board in self.board_ids.
+
+        RETURNS:
+        --------
+        np.array: The K values for all the measurements.
         """
+        str_temp = str(self.board_ids[master_idx]) + "->" + str(self.board_ids[slave_idx])
+        data = self.data[str_temp]
+
         Ra2 = data["Ra2"]
         Db2 = data["Db2"]
 
         return Ra2/Db2
 
-    def _setup_A_matrix(self,K,idx_0,idx_1):
+    def _setup_A_matrix(self,K,master_idx,slave_idx):
         """
-        
+        Calculates the A matrix for the linear least-squares problem.
+
+        PARAMETERS:
+        -----------
+        K: np.array
+            The skew gain K.
+        master_idx: int
+            The index of the master board (initiator) in self.board_ids.
+        slave_idx: int
+            The index of the slave board in self.board_ids.
+
+        RETURNS:
+        --------
+        2D np.array: The A matrix.
         """
         n = len(K)
         A = np.zeros((n,3))
-        A[:,idx_0] += 0.5
-        A[:,idx_1] = 0.5*K
+        A[:,master_idx] += 0.5
+        A[:,slave_idx] = 0.5*K
         
         return A
 
-    def _setup_b_vector(self,K,data):
+    def _setup_b_vector(self,K,master_idx,slave_idx):
         """
-        
+        Calculates the b vector for the linear least-squares problem.
+
+        PARAMETERS:
+        -----------
+        K: np.array
+            The skew gain K.
+        master_idx: int
+            The index of the master board (initiator) in self.board_ids.
+        slave_idx: int
+            The index of the slave board in self.board_ids.
+
+        RETURNS:
+        --------
+        np.array: The b vector.
         """
+        str_temp = str(self.board_ids[master_idx]) + "->" + str(self.board_ids[slave_idx])
+        data = self.data[str_temp]
+
         gt = data["gt"]
         Ra1 = data["Ra1"]
         Db1 = data["Db1"]
@@ -154,31 +252,42 @@ class UwbCalibrate(object):
 
     def _solve_for_antenna_delays(self,A,b):
         """
-        
+        Solves the linear least-squares problem.
+
+        PARAMETERS:
+        -----------
+        A: 2D np.array
+            The A matrix.
+        b: np.array
+            The b vector.
+
+        RETURNS:
+        --------
+        np.array: The solution to the Ax=b problem.
         """
         return np.linalg.lstsq(A,b)
 
     def calibrate_antennas(self):
         """
-        
+        Calibrate the antenna delays by formulating and solving a linear least-squares problem.
+
+        RETURNS:
+        --------
+        dict: Dictionary with 3 fields each for board z \in {i,j,k}
+            Module i: (float)
+                Antenna delay for Board i
         """
-        str_temp = str(self.board_ids[0]) + "->" + str(self.board_ids[1])
-        data_temp = self.data[str_temp]
-        K1 = self._calculate_skew_gain(data_temp)
-        A1 = self._setup_A_matrix(K1, 0, 1)
-        b1 = self._setup_b_vector(K1,data_temp)
+        K1 = self._calculate_skew_gain(0,1)
+        A1 = self._setup_A_matrix(K1,0,1)
+        b1 = self._setup_b_vector(K1,0,1)
 
-        str_temp = str(self.board_ids[0]) + "->" + str(self.board_ids[2])
-        data_temp = self.data[str_temp]
-        K2 = self._calculate_skew_gain(data_temp)
-        A2 = self._setup_A_matrix(K2, 0, 2)
-        b2 = self._setup_b_vector(K2,data_temp)
+        K2 = self._calculate_skew_gain(0,2)
+        A2 = self._setup_A_matrix(K2,0,2)
+        b2 = self._setup_b_vector(K2,0,2)
 
-        str_temp = str(self.board_ids[1]) + "->" + str(self.board_ids[2])
-        data_temp = self.data[str_temp]
-        K3 = self._calculate_skew_gain(data_temp)
-        A3 = self._setup_A_matrix(K3, 1, 2)
-        b3 = self._setup_b_vector(K3,data_temp)
+        K3 = self._calculate_skew_gain(1,2)
+        A3 = self._setup_A_matrix(K3,1,2)
+        b3 = self._setup_b_vector(K3,1,2)
 
         A = np.vstack((A1,A2,A3))
         b = np.vstack((b1,b2,b3))
