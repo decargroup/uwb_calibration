@@ -1,6 +1,4 @@
 import numpy as np
-from sympy import rot_axis2
-
 
 class UwbCalibrate(object):
     """
@@ -132,7 +130,7 @@ class UwbCalibrate(object):
                 Db2 = np.append(Db2, np.mean(tx3 - tx2))
 
         elif self.static is True: # Otherwise, average out only the ground truth if static 
-            gt = my_data[:,3]*0 + np.mean(my_data[:,3])
+            gt = my_data[:,3]
             
             tx1 = my_data[:,4]
             rx1 = my_data[:,5]
@@ -148,10 +146,10 @@ class UwbCalibrate(object):
 
         # Record ground truth and recorded time-stamps
         dict['gt'] = gt
-        dict['Ra1'] = Ra1
-        dict['Ra2'] = Ra2
-        dict['Db1'] = Db1
-        dict['Db2'] = Db2
+        dict['Ra1'] = Ra1*(1e9*(1.0/499.2e6/128.0))
+        dict['Ra2'] = Ra2*(1e9*(1.0/499.2e6/128.0))
+        dict['Db1'] = Db1*(1e9*(1.0/499.2e6/128.0))
+        dict['Db2'] = Db2*(1e9*(1.0/499.2e6/128.0))
 
         return dict
 
@@ -289,11 +287,88 @@ class UwbCalibrate(object):
         A3 = self._setup_A_matrix(K3,1,2)
         b3 = self._setup_b_vector(K3,1,2)
 
+        # Remove rows affected by the clock wrapping
+        # TODO: Should probably do this at the beginning in case average=True
+        idx_rows = np.abs(K1)>1.1
+        K1 = np.delete(K1,idx_rows,0)
+        A1 = np.delete(A1,idx_rows,0)
+        b1 = np.delete(b1,idx_rows,0)
+        idx_rows = np.abs(K1)<0.9
+        A1 = np.delete(A1,idx_rows,0)
+        b1 = np.delete(b1,idx_rows,0)
+
+        idx_rows = np.abs(K2)>1.1
+        K2 = np.delete(K2,idx_rows,0)
+        A2 = np.delete(A2,idx_rows,0)
+        b2 = np.delete(b2,idx_rows,0)
+        idx_rows = np.abs(K2)<0.9
+        A2 = np.delete(A2,idx_rows,0)
+        b2 = np.delete(b2,idx_rows,0)
+
+        idx_rows = np.abs(K3)>1.1
+        K3 = np.delete(K3,idx_rows,0)
+        A3 = np.delete(A3,idx_rows,0)
+        b3 = np.delete(b3,idx_rows,0)
+        idx_rows = np.abs(K3)<0.9
+        A3 = np.delete(A3,idx_rows,0)
+        b3 = np.delete(b3,idx_rows,0)
+
+        idx_rows = np.abs(b1)>10000
+        idx_rows = idx_rows.flatten()
+        A1 = np.delete(A1,idx_rows,0)
+        b1 = np.delete(b1,idx_rows,0)
+        idx_rows = np.abs(b2)>10000
+        idx_rows = idx_rows.flatten()
+        A2 = np.delete(A2,idx_rows,0)
+        b2 = np.delete(b2,idx_rows,0)
+        idx_rows = np.abs(b3)>10000
+        idx_rows = idx_rows.flatten()
+        A3 = np.delete(A3,idx_rows,0)
+        b3 = np.delete(b3,idx_rows,0)
+
         A = np.vstack((A1,A2,A3))
         b = np.vstack((b1,b2,b3))
 
         x = self._solve_for_antenna_delays(A,b)[0]
+        x = x.flatten()
+
+        print(np.linalg.norm(b))
+        print(np.linalg.norm(b-A*np.array([x[0],x[1],x[2]])))
 
         return {"Module " + str(self.board_ids[0]): x[0],
                 "Module " + str(self.board_ids[1]): x[1],
                 "Module " + str(self.board_ids[2]): x[2]}
+
+    def correct_antenna_delay(self, id, delay):
+        """
+        Modifies the data of this object to correct for the antenna delay of a
+        specific module.
+
+        PARAMETERS:
+        -----------
+        id: int
+            Module ID whose antenna delay is to be corrected.
+        delay: float
+            The amount of antenna delay, in nanoseconds.
+        """
+        for key in self.data:
+            if int(key.partition("-")[0]) == id:
+                self.data[key]['Ra1'] = self.data[key]['Ra1'] + delay
+            elif int(key.partition(">")[2]) == id:
+                self.data[key]['Db1'] = self.data[key]['Db1'] - delay
+
+    def compute_range_meas(self, id1, id2):
+        """
+        Only supports reverse double-sided TWR. 
+        TODO: support more TWR types, such as single-sided TWR. 
+        """
+        for key in self.data:
+            cond1 = int(key.partition("-")[0]) == id1 and int(key.partition(">")[2]) == id2
+            cond2 = int(key.partition("-")[0]) == id2 and int(key.partition(">")[2]) == id1
+            if cond1 or cond2:
+                temp = self.data[key]
+                temp = 0.5*self._c*(temp['Ra1'] - (temp['Ra2']/temp['Db2'])*temp['Db1'])/1e9
+                return temp
+
+    def plot_gt_vs_range(self, id, target):
+        pass
