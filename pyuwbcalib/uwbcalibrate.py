@@ -26,7 +26,8 @@ class UwbCalibrate(object):
 
     _c = 299702547 # speed of light
 
-    def __init__(self, filename_1, filename_2, board_ids, average=True, static=True):
+    def __init__(self, filename_1, filename_2, board_ids,
+                 average=True, static=True):
         """
         Constructor
         """
@@ -34,6 +35,7 @@ class UwbCalibrate(object):
         self.board_ids = board_ids
         self.average = average
         self.static = static
+        self.twr_type = int(filename_1[-5])
 
         self.data = {}
 
@@ -146,10 +148,10 @@ class UwbCalibrate(object):
 
         # Record ground truth and recorded time-stamps
         dict['gt'] = gt
-        dict['Ra1'] = Ra1*(1e9*(1.0/499.2e6/128.0))
-        dict['Ra2'] = Ra2*(1e9*(1.0/499.2e6/128.0))
-        dict['Db1'] = Db1*(1e9*(1.0/499.2e6/128.0))
-        dict['Db2'] = Db2*(1e9*(1.0/499.2e6/128.0))
+        dict['Ra1'] = Ra1
+        dict['Ra2'] = Ra2
+        dict['Db1'] = Db1
+        dict['Db2'] = Db2
 
         return dict
 
@@ -175,7 +177,8 @@ class UwbCalibrate(object):
 
     def _calculate_skew_gain(self,master_idx,slave_idx):
         """
-        Calculates the K parameter given by Ra2/Db2.
+        Calculates the K parameter given by Ra2/Db2. 
+        Gain set to 1 if twr_type == 0.
 
         PARAMETERS:
         -----------
@@ -194,7 +197,10 @@ class UwbCalibrate(object):
         Ra2 = data["Ra2"]
         Db2 = data["Db2"]
 
-        return Ra2/Db2
+        if self.twr_type == 0:
+            return Ra2/Ra2
+        else:
+            return Ra2/Db2
 
     def _setup_A_matrix(self,K,master_idx,slave_idx):
         """
@@ -329,6 +335,11 @@ class UwbCalibrate(object):
         A = np.vstack((A1,A2,A3))
         b = np.vstack((b1,b2,b3))
 
+        nan_idx = ~np.isnan(b)
+        nan_idx = nan_idx.flatten()
+        A = A[nan_idx,:]
+        b = b[nan_idx]
+
         x = self._solve_for_antenna_delays(A,b)[0]
         x = x.flatten()
 
@@ -367,7 +378,10 @@ class UwbCalibrate(object):
             cond2 = int(key.partition("-")[0]) == id2 and int(key.partition(">")[2]) == id1
             if cond1 or cond2:
                 temp = self.data[key]
-                temp = 0.5*self._c*(temp['Ra1'] - (temp['Ra2']/temp['Db2'])*temp['Db1'])/1e9
+                if self.twr_type == 0:
+                    temp = 0.5*self._c*(temp['Ra1'] - temp['Db1'])/1e9
+                else:
+                    temp = 0.5*self._c*(temp['Ra1'] - (temp['Ra2']/temp['Db2'])*temp['Db1'])/1e9
                 return temp
 
     def plot_gt_vs_range(self, id, target):

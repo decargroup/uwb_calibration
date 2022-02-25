@@ -4,8 +4,8 @@ import matplotlib.pyplot as plt
 
 
 # x = UwbCalibrate("datasets/synthetic_1.csv","datasets/synthetic_2.csv",[1,2,3],average=False)
-x = UwbCalibrate("datasets/2022_02_23/formatted_ID1_twr1.csv",
-                 "datasets/2022_02_23/formatted_ID2_twr1.csv",
+x = UwbCalibrate("datasets/2022_02_23/formatted_ID1_twr0.csv",
+                 "datasets/2022_02_23/formatted_ID2_twr0.csv",
                  [1,2,3],average=False)
 
 id1 = 2

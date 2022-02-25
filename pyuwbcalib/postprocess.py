@@ -13,7 +13,7 @@ class PostProcess(object):
     """
 
     _c = 299702547 # speed of light
-
+    _to_ns = 1e9*(1.0/499.2e6/128.0) # DW time unit to nanoseconds
     def __init__(self, file_prefix, num_of_formations, board_ids, twr_type=0):
         """
         Constructor
@@ -69,14 +69,19 @@ class PostProcess(object):
                 neighbour = str(row["neighbour"])
                 if self.twr_type == 0:
                     temp = np.array([row["range"],
-                                     row["tx1"],row["rx1"],
-                                     row["tx2"],row["rx2"],
+                                     row["tx1"]*self._to_ns,
+                                     row["rx1"]*self._to_ns,
+                                     row["tx2"]*self._to_ns,
+                                     row["rx2"]*self._to_ns,
                                      0,0])
                 else:
                     temp = np.array([row["range"],
-                                     row["tx1"],row["rx1"],
-                                     row["tx2"],row["rx2"],
-                                     row["tx3"],row["rx3"]])
+                                     row["tx1"]*self._to_ns,
+                                     row["rx1"]*self._to_ns,
+                                     row["tx2"]*self._to_ns,
+                                     row["rx2"]*self._to_ns,
+                                     row["tx3"]*self._to_ns,
+                                     row["rx3"]*self._to_ns])
                 ts_data[neighbour]\
                     = np.vstack((ts_data[neighbour], temp))
 
@@ -238,4 +243,5 @@ class PostProcess(object):
                 data[data=='nan'] = ''
                 np.savetxt(f, data, delimiter=",", fmt="%s")
 
-#def plots
+    def plot_raw_data(self):
+        pass
