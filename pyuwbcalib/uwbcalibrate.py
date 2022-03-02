@@ -22,12 +22,14 @@ class UwbCalibrate(object):
         Flag to indicate whether measurements from static intervals should be averaged out.
     static: bool
         Flag to indicate whether the calibration experiment was done with static intervals.
+    thresh: float
+        Threshold to detect clock wraps and outliers, in nanoseconds.
     """
 
     _c = 299702547 # speed of light
 
     def __init__(self, filename_1, filename_2, board_ids,
-                 average=True, static=True):
+                 average=True, static=True, thresh = 5e7):
         """
         Constructor
         """
@@ -36,6 +38,7 @@ class UwbCalibrate(object):
         self.average = average
         self.static = static
         self.twr_type = int(filename_1[-5])
+        self.thresh = thresh
 
         self.data = {}
 
@@ -145,6 +148,25 @@ class UwbCalibrate(object):
             Ra2 = rx3 - rx2
             Db1 = tx2 - rx1
             Db2 = tx3 - tx2
+
+        # Correct clock wrap affecting measurements
+        Ra1[Ra1<-self.thresh] = Ra1[Ra1<-self.thresh] + 1e9
+        Ra2[Ra2<-self.thresh] = Ra2[Ra2<-self.thresh] + 1e9
+        Db1[Db1<-self.thresh] = Db1[Db1<-self.thresh] + 1e9
+        Db2[Db2<-self.thresh] = Db2[Db2<-self.thresh] + 1e9
+
+        # Remove outliers
+        idx_rows = (np.abs(Ra1)>self.thresh).flatten()
+        idx_rows = np.logical_or(idx_rows,(np.abs(Ra2)>self.thresh).flatten())
+        idx_rows = np.logical_or(idx_rows,(np.abs(Db1)>self.thresh).flatten())
+        idx_rows = np.logical_or(idx_rows,(np.abs(Db2)>self.thresh).flatten())
+        idx_rows = idx_rows.flatten()
+        
+        gt = np.delete(gt,idx_rows,0)
+        Ra1 = np.delete(Ra1,idx_rows,0)
+        Ra2 = np.delete(Ra2,idx_rows,0)
+        Db1 = np.delete(Db1,idx_rows,0)
+        Db2 = np.delete(Db2,idx_rows,0)
 
         # Record ground truth and recorded time-stamps
         dict['gt'] = gt
@@ -292,45 +314,6 @@ class UwbCalibrate(object):
         K3 = self._calculate_skew_gain(1,2)
         A3 = self._setup_A_matrix(K3,1,2)
         b3 = self._setup_b_vector(K3,1,2)
-
-        # Remove rows affected by the clock wrapping
-        # TODO: Should probably do this at the beginning in case average=True
-        idx_rows = np.abs(K1)>1.1
-        K1 = np.delete(K1,idx_rows,0)
-        A1 = np.delete(A1,idx_rows,0)
-        b1 = np.delete(b1,idx_rows,0)
-        idx_rows = np.abs(K1)<0.9
-        A1 = np.delete(A1,idx_rows,0)
-        b1 = np.delete(b1,idx_rows,0)
-
-        idx_rows = np.abs(K2)>1.1
-        K2 = np.delete(K2,idx_rows,0)
-        A2 = np.delete(A2,idx_rows,0)
-        b2 = np.delete(b2,idx_rows,0)
-        idx_rows = np.abs(K2)<0.9
-        A2 = np.delete(A2,idx_rows,0)
-        b2 = np.delete(b2,idx_rows,0)
-
-        idx_rows = np.abs(K3)>1.1
-        K3 = np.delete(K3,idx_rows,0)
-        A3 = np.delete(A3,idx_rows,0)
-        b3 = np.delete(b3,idx_rows,0)
-        idx_rows = np.abs(K3)<0.9
-        A3 = np.delete(A3,idx_rows,0)
-        b3 = np.delete(b3,idx_rows,0)
-
-        idx_rows = np.abs(b1)>10000
-        idx_rows = idx_rows.flatten()
-        A1 = np.delete(A1,idx_rows,0)
-        b1 = np.delete(b1,idx_rows,0)
-        idx_rows = np.abs(b2)>10000
-        idx_rows = idx_rows.flatten()
-        A2 = np.delete(A2,idx_rows,0)
-        b2 = np.delete(b2,idx_rows,0)
-        idx_rows = np.abs(b3)>10000
-        idx_rows = idx_rows.flatten()
-        A3 = np.delete(A3,idx_rows,0)
-        b3 = np.delete(b3,idx_rows,0)
 
         A = np.vstack((A1,A2,A3))
         b = np.vstack((b1,b2,b3))
