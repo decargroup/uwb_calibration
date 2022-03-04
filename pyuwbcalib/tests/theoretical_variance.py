@@ -12,7 +12,7 @@ R = 3 # variance in ns^2
 c = 299702547 # speed of light in m/s
 
 tf = d/c*1e9
-delay = 5e5 # in nanoseconds
+delay = 5e4 # in nanoseconds
 
 gamma_a = 40e-6*0
 gamma_b = 20e-6*0

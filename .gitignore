@@ -1,3 +1,4 @@
 pyuwbcalib/__pycache__/uwbcalibrate.cpython-36.pyc
 datasets/
 pyuwbcalib/__pycache__/postprocess.cpython-36.pyc
+pyuwbcalib/tests/__pycache__/theoretical_variance.cpython-36.pyc
