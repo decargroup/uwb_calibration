@@ -1,4 +1,5 @@
 import numpy as np
+from scipy import stats
 
 class UwbCalibrate(object):
     """
@@ -75,6 +76,8 @@ class UwbCalibrate(object):
                 ID of the master board.
             slave_id: int
                 ID of the slave board.
+            dt: np.array
+                Delta time.
             gt: np.array
                 Ground truth data.
             Ra1: np.array
@@ -85,6 +88,10 @@ class UwbCalibrate(object):
                 The delta tx2-rx1 in the slave board's clock.
             Db2: np.array
                 The delta tx3-tx2 in the slave board's clock.
+            D1: np.array
+                The value rx1-tx1 in the master board's clock.
+            D2: np.array
+                The value rx2-tx2 in the slave board's clock.
         """
         dict = {"master_id": self.board_ids[master_idx], "slave_id": self.board_ids[slave_idx]}
 
@@ -148,12 +155,66 @@ class UwbCalibrate(object):
             Ra2 = rx3 - rx2
             Db1 = tx2 - rx1
             Db2 = tx3 - tx2
+            D1 = rx1 - tx1
+            D2 = rx2 - tx2
+
+        # Calculate delta time
+        max_time_ns = 2**32*(1/499200000/128)*1e9 # wrap time since timestamps represented as uint32 
+        dt = tx1[1:] - tx1[:-1]
+        dt = np.hstack(([0],dt))
+        dt[dt<0] = dt[dt<0] + max_time_ns
 
         # Correct clock wrap affecting measurements
-        Ra1[Ra1<-self.thresh] = Ra1[Ra1<-self.thresh] + 1e9
-        Ra2[Ra2<-self.thresh] = Ra2[Ra2<-self.thresh] + 1e9
-        Db1[Db1<-self.thresh] = Db1[Db1<-self.thresh] + 1e9
-        Db2[Db2<-self.thresh] = Db2[Db2<-self.thresh] + 1e9
+        wrap_Ra1_bool = Ra1<0
+        wrap_Ra2_bool = Ra2<0
+        wrap_Db1_bool = Db1<0
+        wrap_Db2_bool = Db2<0
+
+        Ra1[wrap_Ra1_bool] = Ra1[wrap_Ra1_bool] + max_time_ns
+        Ra2[wrap_Ra2_bool] = Ra2[wrap_Ra2_bool] + max_time_ns
+        Db1[wrap_Db1_bool] = Db1[wrap_Db1_bool] + max_time_ns
+        Db2[wrap_Db2_bool] = Db2[wrap_Db2_bool] + max_time_ns
+        
+        # -------------------------------------------------
+        gap_idx = self._find_mocap_gaps(my_data[:,2])
+        gap_idx = [0] + gap_idx + [np.size(my_data[:,2])] # pad the indices with the start and the end
+        for idx in range(len(gap_idx)-1):
+            idx_beg = gap_idx[idx]
+            idx_end = gap_idx[idx+1]
+            
+            D1_temp = D1[idx_beg:idx_end]
+            
+            D1_rounded = D1[idx_beg:idx_end]
+            D1_rounded = np.round(D1_rounded/1e6,0)*1e6
+            mode_D1 = stats.mode(D1_rounded)
+            D1_rounded = D1_rounded - mode_D1.mode
+            idx_wrap_D1 = D1_rounded<-1e3
+            D1_temp[idx_wrap_D1] = D1_temp[idx_wrap_D1] + max_time_ns
+            idx_wrap_D1 = D1_rounded>1e3
+            D1_temp[idx_wrap_D1] = D1_temp[idx_wrap_D1] - max_time_ns
+
+            D1[idx_beg:idx_end] = D1_temp
+
+        gap_idx = self._find_mocap_gaps(my_data[:,2])
+        gap_idx = [0] + gap_idx + [np.size(my_data[:,2])] # pad the indices with the start and the end
+        for idx in range(len(gap_idx)-1):
+            idx_beg = gap_idx[idx]
+            idx_end = gap_idx[idx+1]
+            
+            D2_temp = D2[idx_beg:idx_end]
+            
+            D2_rounded = D2[idx_beg:idx_end]
+            D2_rounded = np.round(D2_rounded/1e6,0)*1e6
+            mode_D2 = stats.mode(D2_rounded)
+            D2_rounded = D2_rounded - mode_D2.mode
+            idx_wrap_D2 = D2_rounded<-1e3
+            D2_temp[idx_wrap_D2] = D2_temp[idx_wrap_D2] + max_time_ns
+            idx_wrap_D2 = D2_rounded>1e3
+            D2_temp[idx_wrap_D2] = D2_temp[idx_wrap_D2] - max_time_ns
+
+            D2[idx_beg:idx_end] = D2_temp
+
+        # -------------------------------------------------
 
         # Remove outliers
         idx_rows = (np.abs(Ra1)>self.thresh).flatten()
@@ -162,18 +223,24 @@ class UwbCalibrate(object):
         idx_rows = np.logical_or(idx_rows,(np.abs(Db2)>self.thresh).flatten())
         idx_rows = idx_rows.flatten()
         
+        dt = np.delete(dt,idx_rows,0)
         gt = np.delete(gt,idx_rows,0)
         Ra1 = np.delete(Ra1,idx_rows,0)
         Ra2 = np.delete(Ra2,idx_rows,0)
         Db1 = np.delete(Db1,idx_rows,0)
         Db2 = np.delete(Db2,idx_rows,0)
+        D1 = np.delete(D1,idx_rows,0)
+        D2 = np.delete(D2,idx_rows,0)
 
         # Record ground truth and recorded time-stamps
+        dict['dt'] = dt
         dict['gt'] = gt
         dict['Ra1'] = Ra1
         dict['Ra2'] = Ra2
         dict['Db1'] = Db1
         dict['Db2'] = Db2
+        dict['D1'] = D1
+        dict['D2'] = D2
 
         return dict
 
@@ -344,6 +411,10 @@ class UwbCalibrate(object):
             Module ID whose antenna delay is to be corrected.
         delay: float
             The amount of antenna delay, in nanoseconds.
+        
+        TODO: What about D1 and D2? This seems to be a problem. 
+              We might have to calibrate for TX and RX delays separately
+              if we are to proceed with Kalman filtering with this architecture.
         """
         for key in self.data:
             if int(key.partition("-")[0]) == id:
