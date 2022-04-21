@@ -29,7 +29,7 @@ class PostProcess(object):
         self.num_of_tags = len(tag_ids)
 
         self.mean_gt_distance = {i:[] for i in range(num_of_formations)}
-        self.ts_data = [None] * num_of_formations
+        self.ts_data = {i:{} for i in range(num_of_formations)}
         self.mean_range_meas = np.zeros((num_of_formations,3))
 
         self._preprocess_data()
@@ -56,12 +56,9 @@ class PostProcess(object):
 
         return r
 
-    def _extract_ts_data(self,formation_number,agent_number):
-        prefix = self.file_prefix + "/Formation"
-        filename = prefix+str(formation_number)+"_Agent"\
-                + str(agent_number)+"_timestamps.txt"
-        
-        twr_type = -1
+    def _extract_ts_data(self,formation_number,tag_number):
+        filename = self.file_prefix+"tag" + str(tag_number) \
+                   + "/formation"+str(formation_number) + ".txt"
 
         ts_data = {}
 
@@ -70,31 +67,24 @@ class PostProcess(object):
         Lines = file1.readlines()
 
         for line in Lines:
-            if line[0] == "A":
-                target_agent = line[6]
-                twr_type = int(line[-2])
-                if target_agent not in ts_data:
-                    ts_data[target_agent] = np.empty((0,7))
-            elif "tx1" in line and twr_type == self.twr_type:
+            if "tx1" in line:
                 row = ast.literal_eval(line)
-                neighbour = str(row["neighbour"])
-                if self.twr_type == 0:
-                    temp = np.array([row["range"],
-                                     row["tx1"]*self._to_ns,
-                                     row["rx1"]*self._to_ns,
-                                     row["tx2"]*self._to_ns,
-                                     row["rx2"]*self._to_ns,
-                                     0,0])
+                neighbour = row["neighbour"]
+                temp = np.array([row["range"],
+                                 row["tx1"]*self._to_ns,
+                                 row["rx1"]*self._to_ns,
+                                 row["tx2"]*self._to_ns,
+                                 row["rx2"]*self._to_ns,
+                                 row["tx3"]*self._to_ns,
+                                 row["rx3"]*self._to_ns,
+                                 row["Pr1"],
+                                 row["Pr2"]])
+
+                if (tag_number,neighbour) in ts_data:
+                    ts_data[(tag_number,neighbour)] = \
+                        np.vstack((ts_data[(tag_number,neighbour)], temp))
                 else:
-                    temp = np.array([row["range"],
-                                     row["tx1"]*self._to_ns,
-                                     row["rx1"]*self._to_ns,
-                                     row["tx2"]*self._to_ns,
-                                     row["rx2"]*self._to_ns,
-                                     row["tx3"]*self._to_ns,
-                                     row["rx3"]*self._to_ns])
-                ts_data[neighbour]\
-                    = np.vstack((ts_data[neighbour], temp))
+                    ts_data[(tag_number,neighbour)] = np.empty((0,9))
 
         return ts_data
 
@@ -138,11 +128,10 @@ class PostProcess(object):
     def _store_ts_data(self):
         id0 = self.tag_ids[0]
         id1 = self.tag_ids[1]
-        for lv1 in range(self.num_of_formations):
-            temp_dict = {}
-            temp_dict[str(id0)] = self._extract_ts_data(lv1+1,id0)
-            temp_dict[str(id1)] = self._extract_ts_data(lv1+1,id1)
-            self.ts_data[lv1] = temp_dict
+        for formation in range(self.num_of_formations):
+            for tag in self.tag_ids[:-1]: 
+                temp_dict = self._extract_ts_data(formation+1,tag)
+                self.ts_data[formation].update(temp_dict)
 
     def _store_range_meas_mean(self):
         id0 = self.tag_ids[0]
