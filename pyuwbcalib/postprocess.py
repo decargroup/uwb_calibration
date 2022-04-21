@@ -2,6 +2,9 @@ import numpy as np
 import csv
 import ast
 from scipy import optimize
+from bagpy import bagreader
+import pandas as pd
+from itertools import combinations
 
 class PostProcess(object):
     """
@@ -14,16 +17,18 @@ class PostProcess(object):
 
     _c = 299702547 # speed of light
     _to_ns = 1e9*(1.0/499.2e6/128.0) # DW time unit to nanoseconds
-    def __init__(self, file_prefix, num_of_formations, board_ids, twr_type=0):
+    def __init__(self, file_prefix='', num_of_formations=1, tag_ids=[1,2,3], twr_type=0):
         """
         Constructor
         """
         self.file_prefix = file_prefix
         self.num_of_formations = num_of_formations
-        self.board_ids = board_ids
+        self.tag_ids = tag_ids
         self.twr_type = twr_type
 
-        self.mean_gt_distance = np.zeros((num_of_formations,3))
+        self.num_of_tags = len(tag_ids)
+
+        self.mean_gt_distance = {i:[] for i in range(num_of_formations)}
         self.ts_data = [None] * num_of_formations
         self.mean_range_meas = np.zeros((num_of_formations,3))
 
@@ -36,14 +41,20 @@ class PostProcess(object):
         self._match_gt_with_range()
 
     def _extract_gt_data(self, formation_number):
-        filename = self.file_prefix+"/Formation"+str(formation_number)+".csv"
-        my_data = np.genfromtxt(filename, delimiter=',', skip_header=8)
+        filename = self.file_prefix+"ros_bags/formation"+str(formation_number)+".bag"
+        bag_data = bagreader(filename)
 
-        r_1 = my_data[:,2:5]
-        r_2 = my_data[:,5:8]
-        r_3 = my_data[:,8:11]
+        r = {lv1:np.empty(0) for lv1 in self.tag_ids}
+        for lv1 in self.tag_ids:
+            topic_name = '/vrpn_client_node/tripod' + str(lv1) + '/pose'
+            data = bag_data.message_by_topic(topic_name)
+            data_pd = pd.read_csv(data)
 
-        return [r_1, r_2, r_3]
+            r[lv1] = np.array((data_pd['pose.position.x'],
+                               data_pd['pose.position.y'],
+                               data_pd['pose.position.z']))
+
+        return r
 
     def _extract_ts_data(self,formation_number,agent_number):
         prefix = self.file_prefix + "/Formation"
@@ -88,23 +99,22 @@ class PostProcess(object):
         return ts_data
 
     def _calculate_mean_gt_distance(self,r):
-        d_12 = np.linalg.norm(r[0] - r[1],axis=1)
-        d_12 = d_12[~np.isnan(d_12)]
-        d_12 = np.mean(d_12)
+        tag_pairs = combinations(self.tag_ids,2)
 
-        d_13 = np.linalg.norm(r[0] - r[2],axis=1)
-        d_13 = d_13[~np.isnan(d_13)]
-        d_13 = np.mean(d_13)
+        mean_gt = {(i,j):[] for (i,j) in tag_pairs}
+        for pair in mean_gt:
+            i = pair[0]
+            j = pair[1]
 
-        d_23 = np.linalg.norm(r[1] - r[2],axis=1)
-        d_23 = d_23[~np.isnan(d_23)]
-        d_23 = np.mean(d_23)
+            r_i_mean = r[i].mean(axis=1)
+            r_j_mean = r[j].mean(axis=1)
+            mean_gt[pair] = np.linalg.norm(r_i_mean - r_j_mean)
 
-        return [d_12, d_13, d_23]
+        return mean_gt
 
     def _calculate_mean_range(self,range1,range2):
-        id1 = self.board_ids[1]
-        id2 = self.board_ids[2]
+        id1 = self.tag_ids[1]
+        id2 = self.tag_ids[2]
         
         r01 = range1[str(id1)][:,0]
         r01 = r01[~np.isnan(r01)]
@@ -123,11 +133,11 @@ class PostProcess(object):
     def _store_gt_means(self):
         for lv1 in range(self.num_of_formations):
             r = self._extract_gt_data(lv1+1)
-            self.mean_gt_distance[lv1,:] = self._calculate_mean_gt_distance(r)
+            self.mean_gt_distance[lv1] = self._calculate_mean_gt_distance(r)
         
     def _store_ts_data(self):
-        id0 = self.board_ids[0]
-        id1 = self.board_ids[1]
+        id0 = self.tag_ids[0]
+        id1 = self.tag_ids[1]
         for lv1 in range(self.num_of_formations):
             temp_dict = {}
             temp_dict[str(id0)] = self._extract_ts_data(lv1+1,id0)
@@ -135,8 +145,8 @@ class PostProcess(object):
             self.ts_data[lv1] = temp_dict
 
     def _store_range_meas_mean(self):
-        id0 = self.board_ids[0]
-        id1 = self.board_ids[1]
+        id0 = self.tag_ids[0]
+        id1 = self.tag_ids[1]
         for lv1 in range(self.num_of_formations):
             self.mean_range_meas[lv1,:]\
                 = self._calculate_mean_range(self.ts_data[lv1][str(id0)],
@@ -162,7 +172,7 @@ class PostProcess(object):
         col0a = np.array([id])
         col0b = np.array([empty])
         
-        id_idx = np.where(np.array([self.board_ids]) == int(id))[0]
+        id_idx = np.where(np.array([self.tag_ids]) == int(id))[0]
 
         data = np.hstack(((col0a,col0b)))
         data = np.reshape(data,(1,2))

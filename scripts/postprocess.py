@@ -1,7 +1,7 @@
 from pyuwbcalib.postprocess import PostProcess
 
-file_prefix = "datasets/2022_02_23/raw"
-num_of_formations = 7
+file_prefix = "datasets/2022_04_20/"
+num_of_formations = 10
 board_ids = [1,2,3]
 twr_type = 0
 

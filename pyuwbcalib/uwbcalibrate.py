@@ -8,16 +8,16 @@ class UwbCalibrate(object):
     -----------
     filename_1: str
         Relative address of the file containing the timestamps of the TWR instances initiated
-        by the first board (hereafter referred to as "board i").
-    filename_2: str
+        by the first tag (hereafter referred to as "tag i").
+    filename_2: stpythor
         Relative address of the file containing the timestamps of the TWR instances initiated
-        by the second board (hereafter referred to as "board j").
-    board_ids: list of ints
-        List of IDs of the three boards involved in the calibration procedure.
+        by the second tag (hereafter referred to as "tag j").
+    tag_ids: list of ints
+        List of IDs of the three tags involved in the calibration procedure.
         The order is as follows:
-            1) TWR initializer in filename_1 (board i).
-            2) TWR initializer in filename_2 (board j).
-            3) The board that never initialized a TWR instance (board k).
+            1) TWR initializer in filename_1 (tag i).
+            2) TWR initializer in filename_2 (tag j).
+            3) The tag that never initialized a TWR instance (tag k).
     average: bool
         Flag to indicate whether measurements from static intervals should be averaged out.
     static: bool
@@ -28,13 +28,13 @@ class UwbCalibrate(object):
 
     _c = 299702547 # speed of light
 
-    def __init__(self, filename_1, filename_2, board_ids,
+    def __init__(self, filename_1, filename_2, tag_ids,
                  average=True, static=True, thresh = 5e7):
         """
         Constructor
         """
         self.files = [filename_1, filename_2]
-        self.board_ids = board_ids
+        self.tag_ids = tag_ids
         self.average = average
         self.static = static
         self.twr_type = int(filename_1[-5])
@@ -42,16 +42,16 @@ class UwbCalibrate(object):
 
         self.data = {}
 
-        # Boards i and j
-        str_temp = str(board_ids[0]) + "->" + str(board_ids[1])
+        # tags i and j
+        str_temp = str(tag_ids[0]) + "->" + str(tag_ids[1])
         self.data[str_temp] = self._extract_data(self.files[0], 0, 1)
 
-        # Boards i and k
-        str_temp = str(board_ids[0]) + "->" + str(board_ids[2])
+        # tags i and k
+        str_temp = str(tag_ids[0]) + "->" + str(tag_ids[2])
         self.data[str_temp] = self._extract_data(self.files[0], 0, 2)
 
-        # Boards j and k
-        str_temp = str(board_ids[1]) + "->" + str(board_ids[2])
+        # tags j and k
+        str_temp = str(tag_ids[1]) + "->" + str(tag_ids[2])
         self.data[str_temp] = self._extract_data(self.files[1], 1, 2)
 
     def _extract_data(self, filename, master_idx, slave_idx):
@@ -62,36 +62,36 @@ class UwbCalibrate(object):
         -----------
         filename: str
             Relative address of the file containing the timestamps of the TWR instances initiated
-            by the board referred to here as the master.
+            by the tag referred to here as the master.
         master_idx: int
-            The index of the master board (initiator) in self.board_ids.
+            The index of the master tag (initiator) in self.tag_ids.
         slave_idx: int
-            The index of the slave board in self.board_ids.
+            The index of the slave tag in self.tag_ids.
 
         RETURNS:
         --------
         dict: A dictionary with the following fields 
             master_id: int
-                ID of the master board.
+                ID of the master tag.
             slave_id: int
-                ID of the slave board.
+                ID of the slave tag.
             gt: np.array
                 Ground truth data.
             Ra1: np.array
-                The delta rx2-tx1 in the master board's clock.
+                The delta rx2-tx1 in the master tag's clock.
             Ra2: np.array
-                The delta rx3-rx2 in the master board's clock.
+                The delta rx3-rx2 in the master tag's clock.
             Db1: np.array
-                The delta tx2-rx1 in the slave board's clock.
+                The delta tx2-rx1 in the slave tag's clock.
             Db2: np.array
-                The delta tx3-tx2 in the slave board's clock.
+                The delta tx3-tx2 in the slave tag's clock.
         """
-        dict = {"master_id": self.board_ids[master_idx], "slave_id": self.board_ids[slave_idx]}
+        dict = {"master_id": self.tag_ids[master_idx], "slave_id": self.tag_ids[slave_idx]}
 
         idx_diff = slave_idx - master_idx # this is used to determine how many columns to skip
         first_column = 2 + 11*(idx_diff-1)
         last_column = first_column + 9
-        # Always read the first column to assert that the master board id is right
+        # Always read the first column to assert that the master tag id is right
         columns_to_read = np.concatenate((np.array([0]), np.arange(first_column,last_column)))
 
         # Read the file
@@ -205,15 +205,15 @@ class UwbCalibrate(object):
         PARAMETERS:
         -----------
         master_idx: int
-            The index of the master board (initiator) in self.board_ids.
+            The index of the master tag (initiator) in self.tag_ids.
         slave_idx: int
-            The index of the slave board in self.board_ids.
+            The index of the slave tag in self.tag_ids.
 
         RETURNS:
         --------
         np.array: The K values for all the measurements.
         """
-        str_temp = str(self.board_ids[master_idx]) + "->" + str(self.board_ids[slave_idx])
+        str_temp = str(self.tag_ids[master_idx]) + "->" + str(self.tag_ids[slave_idx])
         data = self.data[str_temp]
 
         Ra2 = data["Ra2"]
@@ -233,9 +233,9 @@ class UwbCalibrate(object):
         K: np.array
             The skew gain K.
         master_idx: int
-            The index of the master board (initiator) in self.board_ids.
+            The index of the master tag (initiator) in self.tag_ids.
         slave_idx: int
-            The index of the slave board in self.board_ids.
+            The index of the slave tag in self.tag_ids.
 
         RETURNS:
         --------
@@ -257,15 +257,15 @@ class UwbCalibrate(object):
         K: np.array
             The skew gain K.
         master_idx: int
-            The index of the master board (initiator) in self.board_ids.
+            The index of the master tag (initiator) in self.tag_ids.
         slave_idx: int
-            The index of the slave board in self.board_ids.
+            The index of the slave tag in self.tag_ids.
 
         RETURNS:
         --------
         np.array: The b vector.
         """
-        str_temp = str(self.board_ids[master_idx]) + "->" + str(self.board_ids[slave_idx])
+        str_temp = str(self.tag_ids[master_idx]) + "->" + str(self.tag_ids[slave_idx])
         data = self.data[str_temp]
 
         gt = data["gt"]
@@ -299,9 +299,9 @@ class UwbCalibrate(object):
 
         RETURNS:
         --------
-        dict: Dictionary with 3 fields each for board z \in {i,j,k}
+        dict: Dictionary with 3 fields each for tag z \in {i,j,k}
             Module i: (float)
-                Antenna delay for Board i
+                Antenna delay for tag i
         """
         K1 = self._calculate_skew_gain(0,1)
         A1 = self._setup_A_matrix(K1,0,1)
@@ -329,9 +329,9 @@ class UwbCalibrate(object):
         print(np.linalg.norm(b))
         print(np.linalg.norm(b-A*np.array([x[0],x[1],x[2]])))
 
-        return {"Module " + str(self.board_ids[0]): x[0],
-                "Module " + str(self.board_ids[1]): x[1],
-                "Module " + str(self.board_ids[2]): x[2]}
+        return {"Module " + str(self.tag_ids[0]): x[0],
+                "Module " + str(self.tag_ids[1]): x[1],
+                "Module " + str(self.tag_ids[2]): x[2]}
 
     def correct_antenna_delay(self, id, delay):
         """
