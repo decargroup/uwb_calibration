@@ -30,7 +30,7 @@ class PostProcess(object):
 
         self.mean_gt_distance = {i:[] for i in range(num_of_formations)}
         self.ts_data = {i:{} for i in range(num_of_formations)}
-        self.mean_range_meas = np.zeros((num_of_formations,3))
+        self.mean_range_meas = {i:{} for i in range(num_of_formations)}
 
         self._preprocess_data()
 
@@ -38,7 +38,6 @@ class PostProcess(object):
         self._store_gt_means()
         self._store_ts_data()
         self._store_range_meas_mean()
-        self._match_gt_with_range()
 
     def _extract_gt_data(self, formation_number):
         filename = self.file_prefix+"ros_bags/formation"+str(formation_number)+".bag"
@@ -102,23 +101,12 @@ class PostProcess(object):
 
         return mean_gt
 
-    def _calculate_mean_range(self,range1,range2):
-        id1 = self.tag_ids[1]
-        id2 = self.tag_ids[2]
-        
-        r01 = range1[str(id1)][:,0]
-        r01 = r01[~np.isnan(r01)]
-        r01 = np.mean(r01)
+    def _calculate_mean_range(self,range_data):
+        dict = {}
+        for pair in range_data:
+            dict[pair] = np.mean(range_data[pair][:,0])
 
-        r02 = range1[str(id2)][:,0]
-        r02 = r02[~np.isnan(r02)]
-        r02 = np.mean(r02)
-
-        r12 = range2[str(id2)][:,0]
-        r12 = r12[~np.isnan(r12)]
-        r12 = np.mean(r12)
-
-        return np.array([r01,r02,r12])
+        return dict
 
     def _store_gt_means(self):
         for lv1 in range(self.num_of_formations):
@@ -126,35 +114,15 @@ class PostProcess(object):
             self.mean_gt_distance[lv1] = self._calculate_mean_gt_distance(r)
         
     def _store_ts_data(self):
-        id0 = self.tag_ids[0]
-        id1 = self.tag_ids[1]
         for formation in range(self.num_of_formations):
             for tag in self.tag_ids[:-1]: 
                 temp_dict = self._extract_ts_data(formation+1,tag)
                 self.ts_data[formation].update(temp_dict)
 
     def _store_range_meas_mean(self):
-        id0 = self.tag_ids[0]
-        id1 = self.tag_ids[1]
         for lv1 in range(self.num_of_formations):
-            self.mean_range_meas[lv1,:]\
-                = self._calculate_mean_range(self.ts_data[lv1][str(id0)],
-                                             self.ts_data[lv1][str(id1)])
-
-    def _match_gt_with_range(self):
-        for lv1 in range(self.num_of_formations):
-            # Assignment problem
-            gt_iter = self.mean_gt_distance[lv1,:]
-            meas_iter = self.mean_range_meas[lv1,:]
-            
-            dist = lambda x1, x2: abs(x1 - x2)
-            
-            n = gt_iter.shape[0]
-            t = np.dtype(dist(gt_iter[0], meas_iter[0]))
-            dist_matrix = np.fromiter((dist(x1, x2) for x1 in gt_iter for x2 in meas_iter),
-                                      dtype=t, count=n*n).reshape(n, n)
-            row_ind, col_ind = optimize.linear_sum_assignment(dist_matrix)
-            self.mean_gt_distance[lv1,:] = gt_iter[col_ind]
+            self.mean_range_meas[lv1] \
+                = self._calculate_mean_range(self.ts_data[lv1])
 
     def _process_multitag_data(self,neighbours,id): 
         empty = np.nan
@@ -210,13 +178,6 @@ class PostProcess(object):
             data = np.hstack((data,data_new))
 
         return data
-
-    def manually_change_gt_order(self, row, col_idx0, col_idx1):
-        gt0 = self.mean_gt_distance[row,col_idx0]
-        gt1 = self.mean_gt_distance[row,col_idx1]
-        
-        self.mean_gt_distance[row,col_idx0] = gt1
-        self.mean_gt_distance[row,col_idx1] = gt0
 
     def setup_formatted_files(self):
         # Get list of neighbours

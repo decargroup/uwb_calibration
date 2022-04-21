@@ -7,8 +7,7 @@ twr_type = 0
 
 data_obj = PostProcess(file_prefix, num_of_formations, board_ids, twr_type)
 
-data_obj.manually_change_gt_order(4,0,1)
-data_obj.manually_change_gt_order(4,0,2)
+# data_obj.visualize_data()
 
 print(data_obj.mean_gt_distance)
 print(data_obj.mean_range_meas)
