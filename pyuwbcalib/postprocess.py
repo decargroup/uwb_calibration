@@ -1,3 +1,4 @@
+from genericpath import isfile
 import numpy as np
 import csv
 import ast
@@ -5,6 +6,7 @@ from bagpy import bagreader
 import pandas as pd
 from itertools import combinations
 import matplotlib.pyplot as plt
+from scipy.spatial.transform import Rotation as R
 
 class PostProcess(object):
     """
@@ -13,15 +15,16 @@ class PostProcess(object):
     PARAMETERS:
     -----------
     TODO 1: Check for missing rigid bodies when checking bag files.
-    TODO 2: Collect attitude information.
     """
 
     _c = 299702547 # speed of light
     _to_ns = 1e9*(1.0/499.2e6/128.0) # DW time unit to nanoseconds
-    def __init__(self, file_prefix='', num_of_formations=1, tag_ids=[1,2,3], twr_type=0, num_meas=-1):
+    def __init__(self, folder_prefix='datasets', file_prefix='formation', num_of_formations=1,
+                 tag_ids=[1,2,3], twr_type=0, num_meas=-1):
         """
         Constructor
         """
+        self.folder_prefix = folder_prefix
         self.file_prefix = file_prefix
         self.num_of_formations = num_of_formations
         self.tag_ids = tag_ids
@@ -30,6 +33,8 @@ class PostProcess(object):
 
         self.num_of_tags = len(tag_ids)
 
+        self.r = {i:[] for i in range(num_of_formations)}
+        self.phi = {i:{} for i in range(num_of_formations)}
         self.mean_gt_distance = {i:[] for i in range(num_of_formations)}
         self.ts_data = {i:{} for i in range(num_of_formations)}
         self.mean_range_meas = {i:{} for i in range(num_of_formations)}
@@ -42,10 +47,11 @@ class PostProcess(object):
         self._store_range_meas_mean()
 
     def _extract_gt_data(self, formation_number):
-        filename = self.file_prefix+"ros_bags/formation"+str(formation_number)+".bag"
+        filename = self.folder_prefix+"ros_bags/"+self.file_prefix+str(formation_number)+".bag"
         bag_data = bagreader(filename)
 
         r = {lv1:np.empty(0) for lv1 in self.tag_ids}
+        C = {lv1:[] for lv1 in self.tag_ids}
         for lv1 in self.tag_ids:
             topic_name = '/vrpn_client_node/tripod' + str(lv1) + '/pose'
             data = bag_data.message_by_topic(topic_name)
@@ -55,16 +61,23 @@ class PostProcess(object):
                                data_pd['pose.position.y'],
                                data_pd['pose.position.z']))
 
-        return r
+            C[lv1] = R.from_quat(np.array([data_pd['pose.orientation.x'],
+                                           data_pd['pose.orientation.y'], 
+                                           data_pd['pose.orientation.z'], 
+                                           data_pd['pose.orientation.w']]).T)
+
+        return r, C
 
     def _extract_ts_data(self,formation_number,tag_number):
-        filename = self.file_prefix+"tag" + str(tag_number) \
-                   + "/formation"+str(formation_number) + ".txt"
+        filename = self.folder_prefix+"tag" + str(tag_number) \
+                   + "/"+self.file_prefix+str(formation_number) + ".txt"
 
         ts_data = {}
 
-        # Using readlines()
-        file1 = open(filename, 'r')
+        if isfile(filename):
+            file1 = open(filename, 'r')
+        else:
+            return ts_data
         # Lines = file1.readlines()
 
         for i, line in enumerate(file1):
@@ -124,9 +137,14 @@ class PostProcess(object):
         return dict
 
     def _store_gt_means(self):
-        for lv1 in range(self.num_of_formations):
-            r = self._extract_gt_data(lv1+1)
-            self.mean_gt_distance[lv1] = self._calculate_mean_gt_distance(r)
+        for formation in range(self.num_of_formations):
+            r, C = self._extract_gt_data(formation+1)
+            self.r[formation] = r
+
+            for tag in C:
+                self.phi[formation].update({tag:C[tag].as_rotvec()})
+            
+            self.mean_gt_distance[formation] = self._calculate_mean_gt_distance(r)
         
     def _store_ts_data(self):
         for formation in range(self.num_of_formations):
@@ -218,8 +236,7 @@ class PostProcess(object):
                 data[data=='nan'] = ''
                 np.savetxt(f, data, delimiter=",", fmt="%s")
 
-    def visualize_data(self):
-        pair = (1,2)
+    def visualize_data(self,pair=(1,2)):
         Pr1 = np.empty(0)
         Pr2 = np.empty(0)
         bias = np.empty(0)
