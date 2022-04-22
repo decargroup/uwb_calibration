@@ -1,10 +1,10 @@
 import numpy as np
 import csv
 import ast
-from scipy import optimize
 from bagpy import bagreader
 import pandas as pd
 from itertools import combinations
+import matplotlib.pyplot as plt
 
 class PostProcess(object):
     """
@@ -12,12 +12,13 @@ class PostProcess(object):
 
     PARAMETERS:
     -----------
-    
+    TODO 1: Check for missing rigid bodies when checking bag files.
+    TODO 2: Collect attitude information.
     """
 
     _c = 299702547 # speed of light
     _to_ns = 1e9*(1.0/499.2e6/128.0) # DW time unit to nanoseconds
-    def __init__(self, file_prefix='', num_of_formations=1, tag_ids=[1,2,3], twr_type=0):
+    def __init__(self, file_prefix='', num_of_formations=1, tag_ids=[1,2,3], twr_type=0, num_meas=-1):
         """
         Constructor
         """
@@ -25,6 +26,7 @@ class PostProcess(object):
         self.num_of_formations = num_of_formations
         self.tag_ids = tag_ids
         self.twr_type = twr_type
+        self.num_meas = num_meas
 
         self.num_of_tags = len(tag_ids)
 
@@ -63,27 +65,40 @@ class PostProcess(object):
 
         # Using readlines()
         file1 = open(filename, 'r')
-        Lines = file1.readlines()
+        # Lines = file1.readlines()
 
-        for line in Lines:
-            if "tx1" in line:
-                row = ast.literal_eval(line)
-                neighbour = row["neighbour"]
-                temp = np.array([row["range"],
-                                 row["tx1"]*self._to_ns,
-                                 row["rx1"]*self._to_ns,
-                                 row["tx2"]*self._to_ns,
-                                 row["rx2"]*self._to_ns,
-                                 row["tx3"]*self._to_ns,
-                                 row["rx3"]*self._to_ns,
-                                 row["Pr1"],
-                                 row["Pr2"]])
+        for i, line in enumerate(file1):
+            if self.num_meas != -1 and i >= self.num_meas:
+                break
+            else:
+                if "tx1" in line:
+                    row = ast.literal_eval(line)
+                    neighbour = row["neighbour"]
+                    temp = np.array([row["range"],
+                                    row["tx1"]*self._to_ns,
+                                    row["rx1"]*self._to_ns,
+                                    row["tx2"]*self._to_ns,
+                                    row["rx2"]*self._to_ns,
+                                    row["tx3"]*self._to_ns,
+                                    row["rx3"]*self._to_ns,
+                                    row["Pr1"],
+                                    row["Pr2"]])
 
-                if (tag_number,neighbour) in ts_data:
-                    ts_data[(tag_number,neighbour)] = \
-                        np.vstack((ts_data[(tag_number,neighbour)], temp))
-                else:
-                    ts_data[(tag_number,neighbour)] = np.empty((0,9))
+                    if (tag_number,neighbour) in ts_data:
+                        ts_data[(tag_number,neighbour)] = \
+                            np.vstack((ts_data[(tag_number,neighbour)], temp))
+                    else:
+                        ts_data[(tag_number,neighbour)] = np.empty((0,9))
+
+        self.range_idx = 0
+        self.tx1_idx = 1
+        self.rx1_idx = 2
+        self.tx2_idx = 3
+        self.rx2_idx = 4
+        self.tx3_idx = 5
+        self.rx3_idx = 6
+        self.Pr1_idx = 7
+        self.Pr2_idx = 8
 
         return ts_data
 
@@ -202,6 +217,53 @@ class PostProcess(object):
                 data = data.astype(str)
                 data[data=='nan'] = ''
                 np.savetxt(f, data, delimiter=",", fmt="%s")
+
+    def visualize_data(self):
+        pair = (1,2)
+        Pr1 = np.empty(0)
+        Pr2 = np.empty(0)
+        bias = np.empty(0)
+        for formation in range(self.num_of_formations):
+            data = self.ts_data[formation][pair]
+            Pr1 = np.hstack((Pr1, data[:,self.Pr1_idx]))
+            Pr2 = np.hstack((Pr2, data[:,self.Pr2_idx]))
+            try:
+                bias = np.hstack((bias, data[:,self.range_idx] - self.mean_gt_distance[formation][pair]))
+            except:
+                bias = np.hstack((bias, data[:,self.range_idx] - self.mean_gt_distance[formation][pair[::-1]]))
+
+        # Just load seaborn & set theme and the chart looks better:
+        import seaborn as sns
+        sns.set_theme()
+
+        ########################################## POWER VS BIAS ###############################################
+        fig, axs = plt.subplots(2)
+
+        lift = lambda x: 10**((x + 82) /10)
+        axs[0].scatter(lift(Pr1),bias,s=1)
+        axs[0].set_ylabel("Bias [m]")
+        axs[0].set_xlabel("$f(P_r)$ at Initiator [dBm]")
+        axs[1].scatter(lift(Pr2),bias,s=1)
+        axs[1].set_ylabel("Bias [m]")
+        axs[1].set_xlabel("$f(P_r)$ at Target [dBm]")
+        
+        ############################## BIAS AND POWER vs. MEASUREMENT NUMBER ###################################
+        fig, axs = plt.subplots(3)
+
+        axs[0].plot(bias)
+        axs[0].set_ylabel("Bias [m]")
+        axs[1].plot(Pr1)
+        axs[1].set_ylabel("Reception Power at Initiator [dBm]")
+        axs[2].plot(Pr2)
+        axs[2].set_ylabel("Reception Power at Target [dBm]")
+        axs[2].set_xlabel("Measurement Number")
+
+        plt.show()
+
+
+
+
+
 
     def plot_raw_data(self):
         pass
