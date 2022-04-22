@@ -1,3 +1,14 @@
 pyuwbcalib/__pycache__/uwbcalibrate.cpython-36.pyc
 datasets/
 pyuwbcalib/__pycache__/postprocess.cpython-36.pyc
+doc/LOS_bias/main.bbl
+doc/LOS_bias/main.blg
+doc/LOS_bias/main.fdb_latexmk
+doc/LOS_bias/main.aux
+doc/LOS_bias/main.fls
+.gitignore
+doc/LOS_bias/main.log
+doc/LOS_bias/main.synctex.gz
+doc/LOS_bias/figs/multiplicative_twr-eps-converted-to.pdf
+pyuwbcalib/tests/__pycache__/theoretical_variance.cpython-36.pyc
+doc/LOS_bias/figs/standard_twr-eps-converted-to.pdf
