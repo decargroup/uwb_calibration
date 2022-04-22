@@ -1,0 +1,65 @@
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{decar-lie}
+
+\RequirePackage{decar-common}
+
+% ====== Custom math-mode commands ========================================== %
+
+%% LIE GROUPS
+% SO(N).  Displays in \mathnormal{} regardless of text or math mode.  E.g. \SO3.
+\newcommand{\SO}[1]{\ifmmode SO(#1) \else $SO(#1)$ \fi}
+% SE(N).  Displays in \mathnormal{} regardless of text or math mode.  E.g. \SE3.
+\newcommand{\SE}[1]{\ifmmode SE(#1) \else $SE(#1)$ \fi}
+
+%% LIE ALGEBRAS
+% so(N).  Displays in \mathfrak{} regardless of text or math mode.  E.g. so3.
+\newcommand{\so}[1]{\ifmmode \mathfrak{so}(#1) \else $\mathfrak{so}(#1)$ \fi}
+% se(N).  Displays in \mathfrak{} regardless of text or math mode.  E.g. se3.
+\newcommand{\se}[1]{\ifmmode \mathfrak{se}(#1) \else $\mathfrak{se}(#1)$ \fi}
+
+%% ADJOINTS
+% Adjoint operator for group elements.  E.g. \adj{\mbs{\xi}}.  
+\newcommand{\adjspace}{\hspace{0.1em}}
+% Adjoint for elements of the Lie algebra
+\newcommand{\adj}[1]{\text{adj} \adjspace #1}
+% Adjoint for elements of the Lie group
+\newcommand{\Adj}[1]{\text{Adj} \adjspace #1}
+
+%% LIE ALBEGRA OPERATORS
+% To represent an element of \mathbb{R}^d as an element of the Lie algebra.  E.g. \mbf{r}\expand
+\newcommand{\expand}{^\wedge \hspace{0.1em}}
+% To represent an element of the Lie algebra as an element of \mathbb{R}^d.  E.g. \mbs{\xi}\contract
+\newcommand{\contract}{^\vee}
+% Cross operator (expansion operator for SO(3)).  E.g. \omega \cross
+\newcommand{\crossop}{^\times}
+
+%% LIE ALBEGRA ELEMENTS
+%% GROUP ELEMENTS OF SO(3) (DCMs)
+% Note: The optional argument represents a subscript on the DCM.  E.g. \dcm[ba].
+% Note: If a subscript is present, insert a \dcmsmace between the DCM and the next character.
+\newcommand{\dcmspace}{\hspace{0.1em}}
+% Basic DCM
+\NewDocumentCommand{\dcm}{ O{} }{\mbf{C}_{#1} {\ifthenelse{\equal{#1}{}}{}{\dcmspace}}}
+% Mean DCM
+\NewDocumentCommand{\dcmbar}{ O{} }{\mbfbar{C}_{#1} {\ifthenelse{\equal{#1}{}}{}{\dcmspace}}}
+% Prior DCM
+\NewDocumentCommand{\dcmcheck}{ O{} }{\mbfcheck{C}_{#1} {\ifthenelse{\equal{#1}{}}{}{\dcmspace}}}
+% Posterior DCM
+\NewDocumentCommand{\dcmhat}{ O{} }{\mbfhat{C}_{#1} {\ifthenelse{\equal{#1}{}}{}{\dcmspace}}}
+% Derivative of DCM
+\NewDocumentCommand{\dcmdot}{ O{} }{\mbfdot{C}_{#1} {\ifthenelse{\equal{#1}{}}{}{\dcmspace}}}
+
+%% GROUP ELEMENTS OF SE(3) (poses)
+% Note: There are two optional arguments.  The first represents a superscript on the pose, the second represents a subscript.  E.g. \pose[hg][ef]. 
+% Note: If a superscript is present, insert a \posespace between the superscript and the pose, and the superscript and the next character. 
+\newcommand{\posespace}{\,}
+% Basic pose
+\NewDocumentCommand{\pose}{ O{} O{} }{\mbf{T}_{#2}^{\ifthenelse{\equal{#1}{}}{}{\posespace} #1 \ifthenelse{\equal{#1}{}}{}{\posespace}}}
+% Mean pose
+\NewDocumentCommand{\posebar}{ O{} O{}}{\mbfbar{T}_{#2}^{\ifthenelse{\equal{#1}{}}{}{\posespace} #1 \ifthenelse{\equal{#1}{}}{}{\posespace}}}
+% Prior pose
+\NewDocumentCommand{\posecheck}{ O{} O{} }{\mbfcheck{T}_{#2}^{\ifthenelse{\equal{#1}{}}{}{\posespace} #1 \ifthenelse{\equal{#1}{}}{}{\posespace}}}
+% Posterior pose
+\NewDocumentCommand{\posehat}{ O{} O{} }{\mbfhat{T}_{#2}^{\ifthenelse{\equal{#1}{}}{}{\posespace} #1 \ifthenelse{\equal{#1}{}}{}{\posespace}}}
+% Derivative of pose
+\NewDocumentCommand{\posedot}{ O{} O{} }{\mbfdot{T}_{#2}^{\ifthenelse{\equal{#1}{}}{}{\posespace} #1 \ifthenelse{\equal{#1}{}}{}{\posespace}}}

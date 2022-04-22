@@ -6,7 +6,6 @@ doc/LOS_bias/main.blg
 doc/LOS_bias/main.fdb_latexmk
 doc/LOS_bias/main.aux
 doc/LOS_bias/main.fls
-.gitignore
 doc/LOS_bias/main.log
 doc/LOS_bias/main.synctex.gz
 doc/LOS_bias/figs/multiplicative_twr-eps-converted-to.pdf
