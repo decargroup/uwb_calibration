@@ -158,105 +158,7 @@ class PostProcess(object):
             self.mean_range_meas[lv1] \
                 = self._calculate_mean_range(self.ts_data[lv1])
 
-    def _process_multitag_data(self, neighbours, id):
-        empty = np.nan
-        col0a = np.array([id])
-        col0b = np.array([empty])
-        
-        id_idx = np.where(np.array([self.tag_ids]) == int(id))[0]
-
-        data = np.hstack(((col0a, col0b)))
-        data = np.reshape(data, (1, 2))
-
-        for lv0 in range(len(neighbours)):
-            col1 = np.array([neighbours[lv0]])
-            col2 = np.empty((0, 1))
-            col3 = np.empty((0, 1))
-            col4_to_9 = np.empty((0, 6))
-
-            for formation in range(self.num_of_formations):
-                gt_formation = self.mean_gt_distance[formation, :]
-                ts_formation = self.ts_data[formation][id][neighbours[lv0]]
-                col4_to_9 = np.vstack((col4_to_9, ts_formation[:, 1:]))
-                n = np.size(ts_formation, 0)
-
-                col2_formation = np.reshape(np.array([10e10 * formation] * n), (n, 1))
-                col2 = np.vstack((col2, col2_formation))
-
-                col3_formation = np.reshape([gt_formation[lv0 + id_idx]] * n, (n, 1))
-                col3 = np.vstack((col3, col3_formation))
-
-            n = np.size(col3, 0)
-
-            none_vector = np.reshape(np.array([empty] * (n - 1)), (n - 1, 1))
-            col1 = np.vstack((col1, none_vector))
-
-            col10_to_11 = np.array([empty, empty] * n)
-            col10_to_11 = np.reshape(col10_to_11, (n, 2))
-
-            data_new = np.hstack((col1, col2, col3, col4_to_9, col10_to_11))
-
-            m = np.size(data, 0)
-            if np.size(data) > np.size(data, 0):
-                col_num = np.size(data, 1)
-            else:
-                col_num = 1
-            if m < n:
-                none_matrix = np.array([empty] * col_num * (n - m))
-                none_matrix = np.reshape(none_matrix, (n - m, col_num))
-                data = np.vstack((data, none_matrix))
-            elif n < m:
-                none_matrix = np.array([empty] * col_num * (m - n))
-                none_matrix = np.reshape(none_matrix, (m - n, 11))
-                data_new = np.vstack((data_new, none_matrix))
-            data = np.hstack((data, data_new))
-
-        return data
-
-    def setup_formatted_files(self):
-        # Get list of neighbours
-        for id in self.ts_data[0]:
-            neighbours = []
-            for neigh in self.ts_data[0][id]:
-                neighbours = neighbours + [neigh]
-
-            # Create csv file to store data
-            prefix = self.file_prefix[:-4]  # save outside the 'raw' folder
-            with open(
-                prefix
-                + "/formatted_ID"
-                + str(id)
-                + "_twr"
-                + str(self.twr_type)
-                + ".csv",
-                "w",
-            ) as f:
-                # create the csv writer
-                writer = csv.writer(f)
-
-                # write a row to the csv file -----------------------------------------------
-                neighbour_headers = [
-                    "target_id",
-                    "mocap_ts",
-                    "gt",
-                    "tx1",
-                    "rx1",
-                    "tx2",
-                    "rx2",
-                    "tx3",
-                    "rx3",
-                    None,
-                    None,
-                ]
-                row = ["self_id", None] + neighbour_headers * len(neighbours)
-                writer.writerow(row)
-
-                data = self._process_multitag_data(neighbours, id)
-                data = data.astype(str)
-                data[data == "nan"] = ""
-                np.savetxt(f, data, delimiter=",", fmt="%s")
-
-    def visualize_data(self,pair=(1,2)):
+    def visualize_raw_data(self,pair=(1,2)):
         Pr1 = np.empty(0)
         Pr2 = np.empty(0)
         bias = np.empty(0)
@@ -296,11 +198,3 @@ class PostProcess(object):
         axs[2].set_xlabel("Measurement Number")
 
         plt.show()
-
-
-
-
-
-
-    def plot_raw_data(self):
-        pass
