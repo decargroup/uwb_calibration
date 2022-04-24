@@ -1,13 +1,12 @@
 from genericpath import isfile
 import numpy as np
-import csv
 import ast
 from bagpy import bagreader
 import pandas as pd
 from itertools import combinations
 import matplotlib.pyplot as plt
 from scipy.spatial.transform import Rotation as R
-
+import seaborn as sns
 
 class PostProcess(object):
     """
@@ -171,30 +170,46 @@ class PostProcess(object):
             except:
                 bias = np.hstack((bias, data[:,self.range_idx] - self.mean_gt_distance[formation][pair[::-1]]))
 
-        # Just load seaborn & set theme and the chart looks better:
-        import seaborn as sns
         sns.set_theme()
+
+        # Justin's lifting function
+        lift = lambda x: 10**((x + 82) /10)
+
+        # Axes limits
+        bias_l = -0.5
+        bias_u = 0.5
+        Pr_l = -110
+        Pr_h = -80
 
         ########################################## POWER VS BIAS ###############################################
         fig, axs = plt.subplots(2)
 
-        lift = lambda x: 10**((x + 82) /10)
         axs[0].scatter(lift(Pr1),bias,s=1)
         axs[0].set_ylabel("Bias [m]")
         axs[0].set_xlabel("$f(P_r)$ at Initiator [dBm]")
+        axs[0].set_xlim([lift(Pr_l), lift(Pr_h)])
+        axs[0].set_ylim([bias_l, bias_u])
+
         axs[1].scatter(lift(Pr2),bias,s=1)
         axs[1].set_ylabel("Bias [m]")
         axs[1].set_xlabel("$f(P_r)$ at Target [dBm]")
-        
+        axs[1].set_xlim([lift(Pr_l), lift(Pr_h)])
+        axs[1].set_ylim([bias_l, bias_u])
+
         ############################## BIAS AND POWER vs. MEASUREMENT NUMBER ###################################
         fig, axs = plt.subplots(3)
 
         axs[0].plot(bias)
         axs[0].set_ylabel("Bias [m]")
+        axs[0].set_ylim([bias_l, bias_u])
+
         axs[1].plot(Pr1)
         axs[1].set_ylabel("Reception Power at Initiator [dBm]")
+        axs[1].set_ylim([Pr_l, Pr_h])
+
         axs[2].plot(Pr2)
         axs[2].set_ylabel("Reception Power at Target [dBm]")
+        axs[2].set_ylim([Pr_l, Pr_h])
         axs[2].set_xlabel("Measurement Number")
 
         plt.show()
