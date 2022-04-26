@@ -24,8 +24,8 @@ class PostProcess(object):
         """
         Constructor
         """
-        self.folder_prefix = folder_prefix
-        self.file_prefix = file_prefix
+        self._folder_prefix = folder_prefix
+        self._file_prefix = file_prefix
         self.num_of_formations = num_of_formations
         self.tag_ids = tag_ids
         self.twr_type = twr_type
@@ -47,7 +47,7 @@ class PostProcess(object):
         self._store_range_meas_mean()
 
     def _extract_gt_data(self, formation_number):
-        filename = self.folder_prefix+"ros_bags/"+self.file_prefix+str(formation_number)+".bag"
+        filename = self._folder_prefix+"ros_bags/"+self._file_prefix+str(formation_number)+".bag"
         bag_data = bagreader(filename)
 
         r = {lv1:np.empty(0) for lv1 in self.tag_ids}
@@ -69,8 +69,8 @@ class PostProcess(object):
         return r, C
 
     def _extract_ts_data(self,formation_number,tag_number):
-        filename = self.folder_prefix+"tag" + str(tag_number) \
-                   + "/"+self.file_prefix+str(formation_number) + ".txt"
+        filename = self._folder_prefix+"tag" + str(tag_number) \
+                   + "/"+self._file_prefix+str(formation_number) + ".txt"
 
         ts_data = {}
 

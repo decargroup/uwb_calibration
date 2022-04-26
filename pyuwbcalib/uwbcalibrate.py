@@ -1,9 +1,9 @@
 import numpy as np
 from scipy import stats
 
-
 class UwbCalibrate(object):
     """
+    # TODO: Update this and subsequent documentation.
     Object to handle calibration for the DECAR/MRASL UWB modules.
 
     PARAMETERS:
@@ -11,7 +11,7 @@ class UwbCalibrate(object):
     filename_1: str
         Relative address of the file containing the timestamps of the TWR instances initiated
         by the first tag (hereafter referred to as "tag i").
-    filename_2: stpythor
+    filename_2: str
         Relative address of the file containing the timestamps of the TWR instances initiated
         by the second tag (hereafter referred to as "tag j").
     tag_ids: list of ints
@@ -30,33 +30,30 @@ class UwbCalibrate(object):
 
     _c = 299702547  # speed of light
 
-    def __init__(self, filename_1, filename_2, tag_ids,
-                 average=True, static=True, thresh = 5e7):
+    def __init__(self, processed_data, average=False, static=True, thresh = 5e7):
         """
         Constructor
         """
-        self.files = [filename_1, filename_2]
-        self.tag_ids = tag_ids
         self.average = average
         self.static = static
-        self.twr_type = int(filename_1[-5])
         self.thresh = thresh
 
-        self.data = {}
+        # Retrieve attributes from processed_data
+        self.num_of_formations = processed_data.num_of_formations
+        self.tag_ids = processed_data.tag_ids
+        self.twr_type = processed_data.twr_type
+        self.num_meas = processed_data.num_meas
 
-        # tags i and j
-        str_temp = str(tag_ids[0]) + "->" + str(tag_ids[1])
-        self.data[str_temp] = self._extract_data(self.files[0], 0, 1)
+        self.num_of_tags = processed_data.num_of_formations
 
-        # tags i and k
-        str_temp = str(tag_ids[0]) + "->" + str(tag_ids[2])
-        self.data[str_temp] = self._extract_data(self.files[0], 0, 2)
+        self.r = processed_data.r
+        self.phi = processed_data.phi
+        self.mean_gt_distance = processed_data.mean_gt_distance
+        self.ts_data = processed_data.ts_data
+        self.mean_range_meas = processed_data.mean_range_meas
 
-        # tags j and k
-        str_temp = str(tag_ids[1]) + "->" + str(tag_ids[2])
-        self.data[str_temp] = self._extract_data(self.files[1], 1, 2)
-
-    def _extract_data(self, filename, master_idx, slave_idx):
+    def _extract_data(self, filename, initiating_idx, target_idx):
+        # TODO: This should all be done in PostProcess
         """
         Reads the stored data and stores it in a dictionary for further processing.
 
@@ -64,47 +61,47 @@ class UwbCalibrate(object):
         -----------
         filename: str
             Relative address of the file containing the timestamps of the TWR instances initiated
-            by the tag referred to here as the master.
-        master_idx: int
-            The index of the master tag (initiator) in self.tag_ids.
-        slave_idx: int
-            The index of the slave tag in self.tag_ids.
+            by the tag referred to here as the initiating.
+        initiating_idx: int
+            The index of the initiating tag (initiator) in self.tag_ids.
+        target_idx: int
+            The index of the target tag in self.tag_ids.
 
         RETURNS:
         --------
         dict: A dictionary with the following fields
-            master_id: int
-                ID of the master tag.
-            slave_id: int
-                ID of the slave tag.
+            initiating_id: int
+                ID of the initiating tag.
+            target_id: int
+                ID of the target tag.
             dt: np.array
                 Delta time.
             gt: np.array
                 Ground truth data.
             Ra1: np.array
-                The delta rx2-tx1 in the master tag's clock.
+                The delta rx2-tx1 in the initiating tag's clock.
             Ra2: np.array
-                The delta rx3-rx2 in the master tag's clock.
+                The delta rx3-rx2 in the initiating tag's clock.
             Db1: np.array
-                The delta tx2-rx1 in the slave tag's clock.
+                The delta tx2-rx1 in the target tag's clock.
             Db2: np.array
-                The delta tx3-tx2 in the slave board's clock.
+                The delta tx3-tx2 in the target board's clock.
             D1: np.array
-                The value rx1-tx1 in the master board's clock.
+                The value rx1-tx1 in the initiating board's clock.
             D2: np.array
-                The value rx2-tx2 in the slave board's clock.
+                The value rx2-tx2 in the target board's clock.
         """
         dict = {
-            "master_id": self.board_ids[master_idx],
-            "slave_id": self.board_ids[slave_idx],
+            "initiating_id": self.board_ids[initiating_idx],
+            "target_id": self.board_ids[target_idx],
         }
 
         idx_diff = (
-            slave_idx - master_idx
+            target_idx - initiating_idx
         )  # this is used to determine how many columns to skip
         first_column = 2 + 11 * (idx_diff - 1)
         last_column = first_column + 9
-        # Always read the first column to assert that the master board id is right
+        # Always read the first column to assert that the initiating board id is right
         columns_to_read = np.concatenate(
             (np.array([0]), np.arange(first_column, last_column))
         )
@@ -115,8 +112,8 @@ class UwbCalibrate(object):
         )
 
         # Ensure right modules are communicating
-        assert my_data[0, 0] == dict["master_id"]
-        assert my_data[0, 1] == dict["slave_id"]
+        assert my_data[0, 0] == dict["initiating_id"]
+        assert my_data[0, 1] == dict["target_id"]
 
         gt = np.array([])
         Ra1 = np.array([])
@@ -283,24 +280,24 @@ class UwbCalibrate(object):
 
         return gap_idx.tolist()
 
-    def _calculate_skew_gain(self, master_idx, slave_idx):
+    def _calculate_skew_gain(self, initiating_idx, target_idx):
         """
         Calculates the K parameter given by Ra2/Db2.
         Gain set to 1 if twr_type == 0.
 
         PARAMETERS:
         -----------
-        master_idx: int
-            The index of the master tag (initiator) in self.tag_ids.
-        slave_idx: int
-            The index of the slave tag in self.tag_ids.
+        initiating_idx: int
+            The index of the initiating tag (initiator) in self.tag_ids.
+        target_idx: int
+            The index of the target tag in self.tag_ids.
 
         RETURNS:
         --------
         np.array: The K values for all the measurements.
         """
         str_temp = (
-            str(self.board_ids[master_idx]) + "->" + str(self.board_ids[slave_idx])
+            str(self.board_ids[initiating_idx]) + "->" + str(self.board_ids[target_idx])
         )
         data = self.data[str_temp]
 
@@ -312,7 +309,7 @@ class UwbCalibrate(object):
         else:
             return Ra2 / Db2
 
-    def _setup_A_matrix(self, K, master_idx, slave_idx):
+    def _setup_A_matrix(self, K, initiating_idx, target_idx):
         """
         Calculates the A matrix for the linear least-squares problem.
 
@@ -320,10 +317,10 @@ class UwbCalibrate(object):
         -----------
         K: np.array
             The skew gain K.
-        master_idx: int
-            The index of the master tag (initiator) in self.tag_ids.
-        slave_idx: int
-            The index of the slave tag in self.tag_ids.
+        initiating_idx: int
+            The index of the initiating tag (initiator) in self.tag_ids.
+        target_idx: int
+            The index of the target tag in self.tag_ids.
 
         RETURNS:
         --------
@@ -331,12 +328,12 @@ class UwbCalibrate(object):
         """
         n = len(K)
         A = np.zeros((n, 3))
-        A[:, master_idx] += 0.5
-        A[:, slave_idx] = 0.5 * K
+        A[:, initiating_idx] += 0.5
+        A[:, target_idx] = 0.5 * K
 
         return A
 
-    def _setup_b_vector(self, K, master_idx, slave_idx):
+    def _setup_b_vector(self, K, initiating_idx, target_idx):
         """
         Calculates the b vector for the linear least-squares problem.
 
@@ -344,17 +341,17 @@ class UwbCalibrate(object):
         -----------
         K: np.array
             The skew gain K.
-        master_idx: int
-            The index of the master tag (initiator) in self.tag_ids.
-        slave_idx: int
-            The index of the slave tag in self.tag_ids.
+        initiating_idx: int
+            The index of the initiating tag (initiator) in self.tag_ids.
+        target_idx: int
+            The index of the target tag in self.tag_ids.
 
         RETURNS:
         --------
         np.array: The b vector.
         """
         str_temp = (
-            str(self.board_ids[master_idx]) + "->" + str(self.board_ids[slave_idx])
+            str(self.board_ids[initiating_idx]) + "->" + str(self.board_ids[target_idx])
         )
         data = self.data[str_temp]
 
