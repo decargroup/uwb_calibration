@@ -7,6 +7,7 @@ from itertools import combinations
 import matplotlib.pyplot as plt
 from scipy.spatial.transform import Rotation as R
 import seaborn as sns
+from scipy import stats
 
 class PostProcess(object):
     """
@@ -18,36 +19,38 @@ class PostProcess(object):
     """
 
     _c = 299702547 # speed of light
-    _to_ns = 1e9*(1.0/499.2e6/128.0) # DW time unit to nanoseconds
-    def __init__(self, folder_prefix='datasets', file_prefix='formation', num_of_formations=1,
+    _to_ns = 1e9 * (1.0 / 499.2e6 / 128.0) # DW time unit to nanoseconds
+    def __init__(self, folder_prefix='datasets', file_prefix='recording', num_of_recordings=1,
                  tag_ids=[1,2,3], twr_type=0, num_meas=-1):
         """
         Constructor
         """
         self._folder_prefix = folder_prefix
         self._file_prefix = file_prefix
-        self.num_of_formations = num_of_formations
+        self.num_of_recordings = num_of_recordings
         self.tag_ids = tag_ids
         self.twr_type = twr_type
         self.num_meas = num_meas
 
         self.num_of_tags = len(tag_ids)
 
-        self.r = {i:[] for i in range(num_of_formations)}
-        self.phi = {i:{} for i in range(num_of_formations)}
-        self.mean_gt_distance = {i:[] for i in range(num_of_formations)}
-        self.ts_data = {i:{} for i in range(num_of_formations)}
-        self.mean_range_meas = {i:{} for i in range(num_of_formations)}
+        self.r = {i:[] for i in range(num_of_recordings)}
+        self.phi = {i:{} for i in range(num_of_recordings)}
+        self.mean_gt_distance = {i:[] for i in range(num_of_recordings)}
+        self.ts_data = {i:{} for i in range(num_of_recordings)}
+        self.time_intervals = {i:{} for i in range(num_of_recordings)}
+        self.mean_range_meas = {i:{} for i in range(num_of_recordings)}
 
         self._preprocess_data()
 
     def _preprocess_data(self):
         self._store_gt_means()
         self._store_ts_data()
+        self._store_time_intervals()
         self._store_range_meas_mean()
 
-    def _extract_gt_data(self, formation_number):
-        filename = self._folder_prefix+"ros_bags/"+self._file_prefix+str(formation_number)+".bag"
+    def _extract_gt_data(self, recording_number):
+        filename = self._folder_prefix+"ros_bags/"+self._file_prefix+str(recording_number)+".bag"
         bag_data = bagreader(filename)
 
         r = {lv1:np.empty(0) for lv1 in self.tag_ids}
@@ -68,9 +71,9 @@ class PostProcess(object):
 
         return r, C
 
-    def _extract_ts_data(self,formation_number,tag_number):
+    def _extract_ts_data(self,recording_number,tag_number):
         filename = self._folder_prefix+"tag" + str(tag_number) \
-                   + "/"+self._file_prefix+str(formation_number) + ".txt"
+                   + "/"+self._file_prefix+str(recording_number) + ".txt"
 
         ts_data = {}
 
@@ -115,6 +118,61 @@ class PostProcess(object):
 
         return ts_data
 
+    def _retrieve_time_intervals(self, recording, pair):
+        ts = self.ts_data[recording][pair]
+
+        intervals = {}
+
+        intervals["dt"] = ts[1:,self.tx1_idx] - ts[:-1,self.tx1_idx] # TODO: Replace with ROS timestamp
+        intervals["dt"] = np.hstack(([0], intervals["dt"]))
+        intervals["Ra1"] = ts[:,self.rx2_idx] - ts[:,self.tx1_idx]
+        intervals["Ra2"] = ts[:,self.rx3_idx] - ts[:,self.rx2_idx]
+        intervals["Db1"] = ts[:,self.tx2_idx] - ts[:,self.rx1_idx]
+        intervals["Db2"] = ts[:,self.tx3_idx] - ts[:,self.tx2_idx]
+        intervals["tof1"] = ts[:,self.rx1_idx] - ts[:,self.tx1_idx]
+        intervals["tof2"] = ts[:,self.rx2_idx] - ts[:,self.tx2_idx]
+        intervals["tof3"] = ts[:,self.rx3_idx] - ts[:,self.tx3_idx]
+
+        return intervals
+
+    def _unwrap_clock(self, intervals):
+        # --------------------- Unwrap dt ---------------------
+        # Timestamps are represented as uint32
+        max_time_ns = 2**32 * self._to_ns
+
+        intervals["dt"][intervals["dt"] < 0] \
+            = intervals["dt"][intervals["dt"] < 0] + max_time_ns
+
+        # ------- Unwrap one-clock-dependent intervals --------
+        wrap_Ra1_bool = intervals["Ra1"] < 0
+        wrap_Ra2_bool = intervals["Ra2"] < 0
+        wrap_Db1_bool = intervals["Db1"] < 0
+        wrap_Db2_bool = intervals["Db2"] < 0
+
+        intervals["Ra1"][wrap_Ra1_bool] = intervals["Ra1"][wrap_Ra1_bool] + max_time_ns
+        intervals["Ra2"][wrap_Ra2_bool] = intervals["Ra2"][wrap_Ra2_bool] + max_time_ns
+        intervals["Db1"][wrap_Db1_bool] = intervals["Db1"][wrap_Db1_bool] + max_time_ns
+        intervals["Db2"][wrap_Db2_bool] = intervals["Db2"][wrap_Db2_bool] + max_time_ns
+
+        # ------- Unwrap two-clock-dependent intervals --------
+        intervals["tof1"] = self._wrap_tof(intervals["tof1"], max_time_ns)
+        intervals["tof2"] = self._wrap_tof(intervals["tof2"], max_time_ns)
+        intervals["tof3"] = self._wrap_tof(intervals["tof3"], max_time_ns)
+
+        return intervals
+
+    @staticmethod
+    def _wrap_tof(tof, max_time_ns):
+        tof_rounded = np.round(tof / 1e6, 0) * 1e6
+        tof_mode = stats.mode(tof_rounded)
+        tof_rounded = tof_rounded - tof_mode.mode
+        idx_wrap = tof_rounded < -1e3
+        tof[idx_wrap] = tof[idx_wrap] + max_time_ns
+        idx_wrap = tof_rounded > 1e3
+        tof[idx_wrap] = tof[idx_wrap] - max_time_ns
+
+        return tof
+
     def _calculate_mean_gt_distance(self,r):
         tag_pairs = combinations(self.tag_ids,2)
 
@@ -137,23 +195,30 @@ class PostProcess(object):
         return dict
 
     def _store_gt_means(self):
-        for formation in range(self.num_of_formations):
-            r, C = self._extract_gt_data(formation+1)
-            self.r[formation] = r
+        for recording in range(self.num_of_recordings):
+            r, C = self._extract_gt_data(recording+1)
+            self.r[recording] = r
 
             for tag in C:
-                self.phi[formation].update({tag:C[tag].as_rotvec()})
+                self.phi[recording].update({tag:C[tag].as_rotvec()})
             
-            self.mean_gt_distance[formation] = self._calculate_mean_gt_distance(r)
+            self.mean_gt_distance[recording] = self._calculate_mean_gt_distance(r)
         
     def _store_ts_data(self):
-        for formation in range(self.num_of_formations):
+        for recording in range(self.num_of_recordings):
             for tag in self.tag_ids[:-1]: 
-                temp_dict = self._extract_ts_data(formation+1,tag)
-                self.ts_data[formation].update(temp_dict)
+                temp_dict = self._extract_ts_data(recording+1,tag)
+                self.ts_data[recording].update(temp_dict)
+
+    def _store_time_intervals(self):
+        for recording in range(self.num_of_recordings):
+            for pair in self.ts_data[recording]: 
+                temp_dict = self._retrieve_time_intervals(recording,pair)
+                temp_dict = self._unwrap_clock(temp_dict)
+                self.time_intervals[recording].update({pair:temp_dict})
 
     def _store_range_meas_mean(self):
-        for lv1 in range(self.num_of_formations):
+        for lv1 in range(self.num_of_recordings):
             self.mean_range_meas[lv1] \
                 = self._calculate_mean_range(self.ts_data[lv1])
 
@@ -161,14 +226,14 @@ class PostProcess(object):
         Pr1 = np.empty(0)
         Pr2 = np.empty(0)
         bias = np.empty(0)
-        for formation in range(self.num_of_formations):
-            data = self.ts_data[formation][pair]
+        for recording in range(self.num_of_recordings):
+            data = self.ts_data[recording][pair]
             Pr1 = np.hstack((Pr1, data[:,self.Pr1_idx]))
             Pr2 = np.hstack((Pr2, data[:,self.Pr2_idx]))
             try:
-                bias = np.hstack((bias, data[:,self.range_idx] - self.mean_gt_distance[formation][pair]))
+                bias = np.hstack((bias, data[:,self.range_idx] - self.mean_gt_distance[recording][pair]))
             except:
-                bias = np.hstack((bias, data[:,self.range_idx] - self.mean_gt_distance[formation][pair[::-1]]))
+                bias = np.hstack((bias, data[:,self.range_idx] - self.mean_gt_distance[recording][pair[::-1]]))
 
         sns.set_theme()
 
@@ -180,6 +245,8 @@ class PostProcess(object):
         bias_u = 0.5
         Pr_l = -110
         Pr_h = -80
+
+        #TODO: Range measurements and Ra1, Da1, etc
 
         ########################################## POWER VS BIAS ###############################################
         fig, axs = plt.subplots(2)

@@ -3,7 +3,7 @@ from pyuwbcalib.uwbcalibrate import UwbCalibrate
 
 data_obj = PostProcess(folder_prefix="datasets/2022_04_20/",
                        file_prefix="formation",
-                       num_of_formations=14,
+                       num_of_recordings=1,
                        num_meas=-1)
 
 initiator_id = 2
