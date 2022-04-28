@@ -1,5 +1,5 @@
 import numpy as np
-from urllib3 import encode_multipart_formdata
+from numpy.linalg import inv
 
 class UwbCalibrate(object):
     """
@@ -169,7 +169,6 @@ class UwbCalibrate(object):
 
     def filter_data(self, Q, R, visualize=False):
         if visualize:
-            # Set up visualization environment
             pass
 
         for recording in self.time_intervals:
@@ -180,7 +179,7 @@ class UwbCalibrate(object):
 
                 if visualize:
                     pass
-                    # self._plot_kf(x, P) # TODO:
+                    # self._plot_kf(x_hist, P_hist)
 
     def _clock_filter(self, recording, pair, Q, R):
         # Intervals
@@ -211,13 +210,32 @@ class UwbCalibrate(object):
             if i>0:
                 x, P = self._propagate_clocks(x, P, dt_iter, Q)
 
-            # self._compute_pseudomeasurement() # TODO:
-            # self._correct_clocks() # TODO:
+            y = self._compute_pseudomeasurement(Ra2_iter, Db2_iter, S1_iter, S2_iter)
+            x, P = self._correct_clocks(x, P, y, R)
 
             x_hist[:,i] = x.reshape(2,)
             P_hist[:,:,i] = P
 
         return x_hist, P_hist
+
+    @staticmethod
+    def _compute_pseudomeasurement(Ra2, Db2, S1, S2):
+        return 0.5*(S1 - Ra2/Db2 * S2)
+
+    @staticmethod
+    def _correct_clocks(x, P, y, R):
+        C = np.array(([1,0]))
+        C = C.reshape(1,2)
+
+        y_check = C @ x
+
+        S = C @ P @ C.T + R
+        K = P @ C.T @ inv(S)
+
+        x_new = x + K @ (y - y_check)
+        P_new = (np.eye(2) - K @ C) @ P
+
+        return x_new, P_new
 
     @staticmethod
     def _propagate_clocks(x, P, dt, Q):
