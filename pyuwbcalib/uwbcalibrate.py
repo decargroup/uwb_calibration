@@ -29,27 +29,23 @@ class UwbCalibrate(object):
 
     _c = 299702547  # speed of light
 
-    def __init__(self, processed_data, average=False, static=True, thresh = 5e7):
+    def __init__(self, processed_data, outliers=False):
         """
         Constructor
         """
-        self.average = average
-        self.static = static
-        self.thresh = thresh
-
         # Retrieve attributes from processed_data
-        self.num_of_recordings = processed_data.num_of_recordings
-        self.tag_ids = processed_data.tag_ids
-        self.twr_type = processed_data.twr_type
-        self.num_meas = processed_data.num_meas
+        [attr for attr in dir(processed_data) if not attr.startswith('__')]
+        for attr in dir(processed_data):
+            if not attr.startswith('_'):
+                attr_value = getattr(processed_data, attr)
+                setattr(self, attr, attr_value) # TODO: should only take required attributes
 
-        self.num_of_tags = processed_data.num_of_recordings
+        if not outliers:
+            self._remove_outliers()
 
-        self.r = processed_data.r
-        self.phi = processed_data.phi
-        self.mean_gt_distance = processed_data.mean_gt_distance
-        self.ts_data = processed_data.ts_data
-        self.mean_range_meas = processed_data.mean_range_meas
+    def _remove_outliers(self):
+        # TODO: implement an outlier rejection algorithm.
+        pass
 
     def _calculate_skew_gain(self, initiating_idx, target_idx):
         """
@@ -150,6 +146,9 @@ class UwbCalibrate(object):
         np.array: The solution to the Ax=b problem.
         """
         return np.linalg.lstsq(A, b)
+
+    def filter_data(self, R, Q):
+        pass
 
     def calibrate_antennas(self):
         """

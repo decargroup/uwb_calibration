@@ -21,7 +21,7 @@ class PostProcess(object):
     _c = 299702547 # speed of light
     _to_ns = 1e9 * (1.0 / 499.2e6 / 128.0) # DW time unit to nanoseconds
     def __init__(self, folder_prefix='datasets', file_prefix='recording', num_of_recordings=1,
-                 tag_ids=[1,2,3], twr_type=0, num_meas=-1):
+                 tag_ids=[1,2,3], mult_twr=1, num_meas=-1):
         """
         Constructor
         """
@@ -29,7 +29,7 @@ class PostProcess(object):
         self._file_prefix = file_prefix
         self.num_of_recordings = num_of_recordings
         self.tag_ids = tag_ids
-        self.twr_type = twr_type
+        self.mult_twr = mult_twr
         self.num_meas = num_meas
 
         self.num_of_tags = len(tag_ids)
@@ -222,23 +222,74 @@ class PostProcess(object):
             self.mean_range_meas[lv1] \
                 = self._calculate_mean_range(self.ts_data[lv1])
 
-    def visualize_raw_data(self,pair=(1,2)):
-        Pr1 = np.empty(0)
-        Pr2 = np.empty(0)
+    def _stitch_time_intervals(self, pair):
+        all_interv = {}
+        all_interv["Ra1"] = np.empty(0)
+        all_interv["Ra2"] = np.empty(0)
+        all_interv["Db1"] = np.empty(0)
+        all_interv["Db2"] = np.empty(0)
+        all_interv["tof1"] = np.empty(0)
+        all_interv["tof2"] = np.empty(0)
+        all_interv["tof3"] = np.empty(0)
+        for recording in range(self.num_of_recordings):
+            intervals_iter = self.time_intervals[recording][pair]
+            all_interv["Ra1"] = np.hstack((all_interv["Ra1"], intervals_iter["Ra1"]))
+            all_interv["Ra2"] = np.hstack((all_interv["Ra2"], intervals_iter["Ra2"]))
+            all_interv["Db1"] = np.hstack((all_interv["Db1"], intervals_iter["Db1"]))
+            all_interv["Db2"] = np.hstack((all_interv["Db2"], intervals_iter["Db2"]))
+            all_interv["tof1"] = np.hstack((all_interv["tof1"], intervals_iter["tof1"]))
+            all_interv["tof2"] = np.hstack((all_interv["tof2"], intervals_iter["tof2"]))
+            all_interv["tof3"] = np.hstack((all_interv["tof3"], intervals_iter["tof3"]))
+
+        return all_interv
+
+    def _stitch_power_and_bias(self, pair):
+        all_Pr = {}
+        all_Pr["Pr1"] = np.empty(0)
+        all_Pr["Pr2"] = np.empty(0)
         bias = np.empty(0)
         for recording in range(self.num_of_recordings):
-            data = self.ts_data[recording][pair]
-            Pr1 = np.hstack((Pr1, data[:,self.Pr1_idx]))
-            Pr2 = np.hstack((Pr2, data[:,self.Pr2_idx]))
+            ts_iter = self.ts_data[recording][pair]
+            all_Pr["Pr1"] = np.hstack((all_Pr["Pr1"], ts_iter[:,self.Pr1_idx]))
+            all_Pr["Pr2"] = np.hstack((all_Pr["Pr2"], ts_iter[:,self.Pr2_idx]))
             try:
-                bias = np.hstack((bias, data[:,self.range_idx] - self.mean_gt_distance[recording][pair]))
+                bias = np.hstack((bias, ts_iter[:,self.range_idx] - self.mean_gt_distance[recording][pair]))
             except:
-                bias = np.hstack((bias, data[:,self.range_idx] - self.mean_gt_distance[recording][pair[::-1]]))
+                bias = np.hstack((bias, ts_iter[:,self.range_idx] - self.mean_gt_distance[recording][pair[::-1]]))
+
+        return all_Pr, bias
+
+    def _ss_twr_plotting(self, all_interv):
+        range = 0.5 * self._c / 1e9 * \
+            (all_interv["Ra1"] - all_interv["Db1"])
+
+        fig, axs = plt.subplots(1)
+
+        axs.plot(range)
+        axs.set_ylabel("Range Measurement [m]")
+        axs.set_xlabel("Measurement Number")
+        axs.set_ylim([-1, 10])
+
+    def _ds_twr_plotting(self, all_interv):
+        range = 0.5 * self._c / 1e9 * \
+            (all_interv["Ra1"] - (all_interv["Ra2"] / all_interv["Db2"]) * all_interv["Db1"])
+
+        fig, axs = plt.subplots(1)
+
+        axs.plot(range)
+        axs.set_ylabel("Range Measurement [m]")
+        axs.set_xlabel("Measurement Number")
+        axs.set_ylim([-1, 10])
+
+    def visualize_raw_data(self, pair=(1,2)):
+        all_interv = self._stitch_time_intervals(pair)
+        all_Pr, bias = self._stitch_power_and_bias(pair)
 
         sns.set_theme()
 
         # Justin's lifting function
-        lift = lambda x: 10**((x + 82) /10)
+        alpha = -82 # TODO: make a function of the measured power data
+        lift = lambda x: 10**((x - alpha) /10)
 
         # Axes limits
         bias_l = -0.5
@@ -246,22 +297,39 @@ class PostProcess(object):
         Pr_l = -110
         Pr_h = -80
 
-        #TODO: Range measurements and Ra1, Da1, etc
+        ####################################### RANGE MEASUREMENTS #############################################
+        if self.mult_twr:
+            self._ds_twr_plotting(all_interv)
+        else:
+            self._ss_twr_plotting(all_interv)
+
+        ######################################### TIME INTERVALS ###############################################
+        fig, axs = plt.subplots(3,3)
+
+        col_num = 0
+        row_num = 0
+        for interv_str in all_interv:
+            interv = all_interv[interv_str]
+            axs[row_num,col_num].plot(interv)
+            axs[row_num,col_num].set_ylabel(interv_str + " [ns]")
+            axs[row_num,col_num].set_xlabel("Measurement Number")
+
+            if col_num == 2:
+                row_num += 1
+                col_num = 0
+            else:
+                col_num += 1
 
         ########################################## POWER VS BIAS ###############################################
-        fig, axs = plt.subplots(2)
+        fig, axs = plt.subplots(len(all_Pr))
 
-        axs[0].scatter(lift(Pr1),bias,s=1)
-        axs[0].set_ylabel("Bias [m]")
-        axs[0].set_xlabel("$f(P_r)$ at Initiator [dBm]")
-        axs[0].set_xlim([lift(Pr_l), lift(Pr_h)])
-        axs[0].set_ylim([bias_l, bias_u])
-
-        axs[1].scatter(lift(Pr2),bias,s=1)
-        axs[1].set_ylabel("Bias [m]")
-        axs[1].set_xlabel("$f(P_r)$ at Target [dBm]")
-        axs[1].set_xlim([lift(Pr_l), lift(Pr_h)])
-        axs[1].set_ylim([bias_l, bias_u])
+        for i, Pr_str in enumerate(all_Pr):
+            Pr = all_Pr[Pr_str]
+            axs[i].scatter(lift(Pr),bias,s=1)
+            axs[i].set_ylabel("Bias [m]")
+            axs[i].set_xlabel("$f("+ Pr_str + ")$ [dBm]")
+            axs[i].set_xlim([lift(Pr_l), lift(Pr_h)])
+            axs[i].set_ylim([bias_l, bias_u])
 
         ############################## BIAS AND POWER vs. MEASUREMENT NUMBER ###################################
         fig, axs = plt.subplots(3)
@@ -270,13 +338,12 @@ class PostProcess(object):
         axs[0].set_ylabel("Bias [m]")
         axs[0].set_ylim([bias_l, bias_u])
 
-        axs[1].plot(Pr1)
-        axs[1].set_ylabel("Reception Power at Initiator [dBm]")
-        axs[1].set_ylim([Pr_l, Pr_h])
+        for i, Pr_str in enumerate(all_Pr):
+            Pr = all_Pr[Pr_str]
+            axs[i+1].plot(Pr)
+            axs[i+1].set_ylabel(Pr_str + " [dBm]")
+            axs[i+1].set_ylim([Pr_l, Pr_h])
 
-        axs[2].plot(Pr2)
-        axs[2].set_ylabel("Reception Power at Target [dBm]")
-        axs[2].set_ylim([Pr_l, Pr_h])
-        axs[2].set_xlabel("Measurement Number")
+        axs[i+1].set_xlabel("Measurement Number")
 
         plt.show()
