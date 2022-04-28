@@ -1,4 +1,5 @@
 import numpy as np
+from urllib3 import encode_multipart_formdata
 
 class UwbCalibrate(object):
     """
@@ -34,11 +35,30 @@ class UwbCalibrate(object):
         Constructor
         """
         # Retrieve attributes from processed_data
-        [attr for attr in dir(processed_data) if not attr.startswith('__')]
-        for attr in dir(processed_data):
-            if not attr.startswith('_'):
-                attr_value = getattr(processed_data, attr)
-                setattr(self, attr, attr_value) # TODO: should only take required attributes
+        # TODO: there must be a better way to do this without confusing intelliSense
+        self.num_of_recordings = processed_data.num_of_recordings
+        self.tag_ids = processed_data.tag_ids
+        self.mult_twr = processed_data.mult_twr
+        self.num_meas = processed_data.num_meas
+
+        self.num_of_tags = processed_data.num_of_tags
+
+        self.r = processed_data.r
+        self.phi = processed_data.phi
+        self.mean_gt_distance = processed_data.mean_gt_distance
+        self.ts_data = processed_data.ts_data
+        self.time_intervals = processed_data.time_intervals
+        self.mean_range_meas = processed_data.mean_range_meas
+
+        self.range_idx = 0
+        self.tx1_idx = 1
+        self.rx1_idx = 2
+        self.tx2_idx = 3
+        self.rx2_idx = 4
+        self.tx3_idx = 5
+        self.rx3_idx = 6
+        self.Pr1_idx = 7
+        self.Pr2_idx = 8
 
         if not outliers:
             self._remove_outliers()
@@ -147,9 +167,69 @@ class UwbCalibrate(object):
         """
         return np.linalg.lstsq(A, b)
 
-    def filter_data(self, R, Q):
-        pass
+    def filter_data(self, Q, R, visualize=False):
+        if visualize:
+            # Set up visualization environment
+            pass
 
+        for recording in self.time_intervals:
+            for pair in self.time_intervals[recording]:
+                x_hist, P_hist = self._clock_filter(recording, pair, Q, R)
+                
+                # self._update_intervals() # TODO:
+
+                if visualize:
+                    pass
+                    # self._plot_kf(x, P) # TODO:
+
+    def _clock_filter(self, recording, pair, Q, R):
+        # Intervals
+        dt = self.time_intervals[recording][pair]["dt"]
+        Ra2 = self.time_intervals[recording][pair]["Ra2"]
+        Db2 = self.time_intervals[recording][pair]["Db2"]
+        S1 = self.time_intervals[recording][pair]["S1"]
+        S2 = self.time_intervals[recording][pair]["S2"]
+
+        # Storage variables
+        n = dt.size
+        x_hist = np.zeros((2,n))
+        P_hist = np.zeros((2,2,n))
+
+        # Initial estimate and uncertainty
+        tau = 0
+        skew = 0
+        x = np.array([tau, skew])
+        x = x.reshape(2,1)
+        P = np.array(([1e10,0],[0,1e10])) # TODO: better estimate of initial uncertainty
+
+        for i, dt_iter in enumerate(dt):
+            Ra2_iter = Ra2[i]
+            Db2_iter = Db2[i]
+            S1_iter = S1[i]
+            S2_iter = S2[i]
+            
+            if i>0:
+                x, P = self._propagate_clocks(x, P, dt_iter, Q)
+
+            # self._compute_pseudomeasurement() # TODO:
+            # self._correct_clocks() # TODO:
+
+            x_hist[:,i] = x.reshape(2,)
+            P_hist[:,:,i] = P
+
+        return x_hist, P_hist
+
+    @staticmethod
+    def _propagate_clocks(x, P, dt, Q):
+        A = np.array(([1, dt], [0, 1]))
+        L = np.array(([dt, 0.5*dt**2], [0, dt]))
+
+        x_new = A @ x
+        P_new = A @ P @ A.T + L @ Q @ L.T
+
+        return x_new, P_new
+
+            
     def calibrate_antennas(self):
         """
         Calibrate the antenna delays by formulating and solving a linear least-squares problem.
@@ -238,6 +318,3 @@ class UwbCalibrate(object):
                         / 1e9
                     )
                 return temp
-
-    def plot_gt_vs_range(self, id, target):
-        pass

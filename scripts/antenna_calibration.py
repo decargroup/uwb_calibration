@@ -1,36 +1,54 @@
+# %%
 from pyuwbcalib.uwbcalibrate import UwbCalibrate
+from pyuwbcalib.postprocess import PostProcess
 import matplotlib.pyplot as plt
+import numpy as np
+import os
 
+print(os.getcwd())
 
-# x = UwbCalibrate("datasets/synthetic_1.csv","datasets/synthetic_2.csv",[1,2,3],average=False)
-x = UwbCalibrate(
-    "datasets/2022_02_23/formatted_ID1_twr0.csv",
-    "datasets/2022_02_23/formatted_ID2_twr0.csv",
-    [1, 2, 3],
-    average=False,
-)
+raw_obj = PostProcess(folder_prefix="datasets/2022_04_20/",
+                       file_prefix="formation",
+                       num_of_recordings=1,
+                       num_meas=-1)
 
-id1 = 2
-id2 = 3
+initiator_id = 2
+target_id = 3
 
-meas_old = x.compute_range_meas(id1, id2)
+raw_obj.visualize_raw_data(pair=(initiator_id,target_id))
 
-delays = x.calibrate_antennas()
+# TODO: Surely there is a better way to do this??
+calib_obj = UwbCalibrate(raw_obj)
+
+# meas_old = calib_obj.compute_range_meas(initiator_id, target_id)
+
+# %%
+# Implement the Kalman filter and update the estimates
+R = 1
+Q = np.array(([1,0], [0,1]))
+calib_obj.filter_data(Q, R, visualize = True)
+
+# %%
+
+meas_filtered = calib_obj.compute_range_meas(initiator_id, target_id)
+
+# Calibrate the antenna delays
+delays = calib_obj.calibrate_antennas()
 print(delays)
-x.correct_antenna_delay(1, delays["Module 1"])
-x.correct_antenna_delay(2, delays["Module 2"])
-x.correct_antenna_delay(3, delays["Module 3"])
+calib_obj.correct_antenna_delay(1, delays["Module 1"])
+calib_obj.correct_antenna_delay(2, delays["Module 2"])
+calib_obj.correct_antenna_delay(3, delays["Module 3"])
 
-meas_new = x.compute_range_meas(id1, id2)
+meas_new = calib_obj.compute_range_meas(initiator_id, target_id)
 
 #%%
 fig, ax = plt.subplots()
-ax.set_title("Measurements " + str(id1) + "->" + str(id2))
+ax.set_title("Measurements " + str(initiator_id) + "->" + str(target_id))
 ax.set_xlabel("Measurement Number")
 ax.set_ylabel("Range [m]")
 ax.set_ylim(0, 4)
 plt.plot(meas_old, linewidth=1, label="Raw")
 plt.plot(meas_new, linewidth=1, label="Calibrated")
-plt.plot(x.data[str(id1) + "->" + str(id2)]["gt"], linewidth=3, label="GT")
+plt.plot(x.data[str(initiator_id) + "->" + str(target_id)]["gt"], linewidth=3, label="GT")
 ax.legend()
 plt.show()

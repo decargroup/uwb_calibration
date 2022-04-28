@@ -132,6 +132,8 @@ class PostProcess(object):
         intervals["tof1"] = ts[:,self.rx1_idx] - ts[:,self.tx1_idx]
         intervals["tof2"] = ts[:,self.rx2_idx] - ts[:,self.tx2_idx]
         intervals["tof3"] = ts[:,self.rx3_idx] - ts[:,self.tx3_idx]
+        intervals["S1"] = ts[:,self.rx2_idx] + ts[:,self.tx1_idx]
+        intervals["S2"] = ts[:,self.tx2_idx] + ts[:,self.rx1_idx]
 
         return intervals
 
@@ -150,8 +152,10 @@ class PostProcess(object):
         wrap_Db2_bool = intervals["Db2"] < 0
 
         intervals["Ra1"][wrap_Ra1_bool] = intervals["Ra1"][wrap_Ra1_bool] + max_time_ns
+        intervals["S1"][wrap_Ra1_bool] = intervals["S1"][wrap_Ra1_bool] + max_time_ns
         intervals["Ra2"][wrap_Ra2_bool] = intervals["Ra2"][wrap_Ra2_bool] + max_time_ns
         intervals["Db1"][wrap_Db1_bool] = intervals["Db1"][wrap_Db1_bool] + max_time_ns
+        intervals["S2"][wrap_Db1_bool] = intervals["S2"][wrap_Db1_bool] + max_time_ns
         intervals["Db2"][wrap_Db2_bool] = intervals["Db2"][wrap_Db2_bool] + max_time_ns
 
         # ------- Unwrap two-clock-dependent intervals --------
@@ -231,6 +235,8 @@ class PostProcess(object):
         all_interv["tof1"] = np.empty(0)
         all_interv["tof2"] = np.empty(0)
         all_interv["tof3"] = np.empty(0)
+        all_interv["S1"] = np.empty(0)
+        all_interv["S2"] = np.empty(0)
         for recording in range(self.num_of_recordings):
             intervals_iter = self.time_intervals[recording][pair]
             all_interv["Ra1"] = np.hstack((all_interv["Ra1"], intervals_iter["Ra1"]))
@@ -240,6 +246,8 @@ class PostProcess(object):
             all_interv["tof1"] = np.hstack((all_interv["tof1"], intervals_iter["tof1"]))
             all_interv["tof2"] = np.hstack((all_interv["tof2"], intervals_iter["tof2"]))
             all_interv["tof3"] = np.hstack((all_interv["tof3"], intervals_iter["tof3"]))
+            all_interv["S1"] = np.hstack((all_interv["S1"], intervals_iter["S1"]))
+            all_interv["S2"] = np.hstack((all_interv["S2"], intervals_iter["S2"]))
 
         return all_interv
 
