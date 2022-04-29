@@ -17,6 +17,7 @@ class PostProcess(object):
     -----------
     TODO 1: Check for missing rigid bodies when checking bag files.
          2: Remove support for loading multiple bag files. No longer necessary.
+         3: Add tests.
     """
 
     _c = 299702547 # speed of light
@@ -60,17 +61,17 @@ class PostProcess(object):
         topics = bag_data.topics
         
         # Generate a list of devices
-        self.devices = []
+        all_devices = []
         for topic in topics:
             if topic[-5:] == "range":
                 device = topic.split('uwb/range')[0]
-                self.devices.append(device)
+                all_devices.append(device)
 
         # Get the tag(s) attached to each device
-        device_tags = {device:[] for device in self.devices}
-        for device in self.devices:
-            topic_name = device + 'uwb/range'
-            data = bag_data.message_by_topic(topic_name)
+        self.device_tags = {device:[] for device in all_devices}
+        for device in all_devices:
+            topic = device + 'uwb/range'
+            data = bag_data.message_by_topic(topic)
             data_pd = pd.read_csv(data)
 
             id = data_pd['from_id']
@@ -83,8 +84,8 @@ class PostProcess(object):
         r = {lv0:np.empty(0) for lv0 in self.tag_ids}
         C = {lv0:[] for lv0 in self.tag_ids}
         for lv0 in self.tag_ids:
-            topic_name = '/vrpn_client_node/tripod' + str(lv0) + '/pose'
-            data = bag_data.message_by_topic(topic_name)
+            topic = '/vrpn_client_node/tripod' + str(lv0) + '/pose'
+            data = bag_data.message_by_topic(topic)
             data_pd = pd.read_csv(data)
 
             r[lv0] = np.array((data_pd['pose.position.x'],
@@ -98,50 +99,49 @@ class PostProcess(object):
 
         return r, C
 
-    def _extract_ts_data(self,recording_number,tag_number):
-        filename = self._folder_prefix+"tag" + str(tag_number) \
-                   + "/"+self._file_prefix+str(recording_number) + ".txt"
+    def _extract_ts_data(self,recording_number):
+        filename = self._folder_prefix+"ros_bags/"+self._file_prefix+str(recording_number)+".bag"
+        bag_data = bagreader(filename)
 
         ts_data = {}
 
-        if isfile(filename):
-            file1 = open(filename, 'r')
-        else:
-            return ts_data
-        # Lines = file1.readlines()
+        for device in self.device_tags:
+            topic = device + 'uwb/range'
+            data = bag_data.message_by_topic(topic)
+            data_pd = pd.read_csv(data)
 
-        for i, line in enumerate(file1):
-            if self.num_meas != -1 and i >= self.num_meas:
-                break
-            else:
-                if "tx1" in line:
-                    row = ast.literal_eval(line)
-                    neighbour = row["neighbour"]
-                    temp = np.array([row["range"],
-                                    row["tx1"]*self._to_ns,
-                                    row["rx1"]*self._to_ns,
-                                    row["tx2"]*self._to_ns,
-                                    row["rx2"]*self._to_ns,
-                                    row["tx3"]*self._to_ns,
-                                    row["rx3"]*self._to_ns,
-                                    row["Pr1"],
-                                    row["Pr2"]])
+            for idx, row in data_pd.iterrows():
+                if self.num_meas != -1 and idx >= self.num_meas:
+                    break
 
-                    if (tag_number,neighbour) in ts_data:
-                        ts_data[(tag_number,neighbour)] = \
-                            np.vstack((ts_data[(tag_number,neighbour)], temp))
-                    else:
-                        ts_data[(tag_number,neighbour)] = np.empty((0,9))
+                initiator_id = row["from_id"]
+                target_id = row["to_id"]
+                temp = np.array([row["header/stamp"],
+                                 row["range"],
+                                 row["tx1"]*self._to_ns,
+                                 row["rx1"]*self._to_ns,
+                                 row["tx2"]*self._to_ns,
+                                 row["rx2"]*self._to_ns,
+                                 row["tx3"]*self._to_ns,
+                                 row["rx3"]*self._to_ns,
+                                 row["Pr1"],
+                                 row["Pr2"]])
 
-        self.range_idx = 0
-        self.tx1_idx = 1
-        self.rx1_idx = 2
-        self.tx2_idx = 3
-        self.rx2_idx = 4
-        self.tx3_idx = 5
-        self.rx3_idx = 6
-        self.Pr1_idx = 7
-        self.Pr2_idx = 8
+                if (initiator_id, target_id) not in ts_data:
+                    ts_data[(initiator_id,target_id)] = np.empty((0,9))
+
+                ts_data[(initiator_id,target_id)] = \
+                            np.vstack((ts_data[(initiator_id,target_id)], temp))
+
+        self.range_idx = 1
+        self.tx1_idx = 2
+        self.rx1_idx = 3
+        self.tx2_idx = 4
+        self.rx2_idx = 5
+        self.tx3_idx = 6
+        self.rx3_idx = 7
+        self.Pr1_idx = 8
+        self.Pr2_idx = 9
 
         return ts_data
 
@@ -250,9 +250,8 @@ class PostProcess(object):
         
     def _store_ts_data(self):
         for recording in range(self.num_of_recordings):
-            for tag in self.tag_ids[:-1]: 
-                temp_dict = self._extract_ts_data(recording+1,tag)
-                self.ts_data[recording].update(temp_dict)
+            temp_dict = self._extract_ts_data(recording+1)
+            self.ts_data[recording].update(temp_dict)
 
     def _store_time_intervals(self):
         self._unwrap_all_clocks()
