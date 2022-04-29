@@ -16,6 +16,7 @@ class PostProcess(object):
     PARAMETERS:
     -----------
     TODO 1: Check for missing rigid bodies when checking bag files.
+         2: Remove support for loading multiple bag files. No longer necessary.
     """
 
     _c = 299702547 # speed of light
@@ -44,10 +45,36 @@ class PostProcess(object):
         self._preprocess_data()
 
     def _preprocess_data(self):
+        self._detect_setup()
+
         self._store_gt_means()
         self._store_ts_data()
         self._store_time_intervals()
         self._store_range_meas_mean()
+
+    def _detect_setup(self):
+        # Only read first file
+        filename = self._folder_prefix+"ros_bags/"+self._file_prefix+str(1)+".bag" 
+        bag_data = bagreader(filename)
+
+        topics = bag_data.topics
+        
+        # Generate a list of devices
+        self.devices = []
+        for topic in topics:
+            if topic[-5:] == "range":
+                device = topic.split('uwb/range')[0]
+                self.devices.append(device)
+
+        # Get the tag(s) attached to each device
+        device_tags = {device:[] for device in self.devices}
+        for device in self.devices:
+            topic_name = device + 'uwb/range'
+            data = bag_data.message_by_topic(topic_name)
+            data_pd = pd.read_csv(data)
+
+            id = data_pd['from_id']
+            self.device_tags[device] = list(set(id))
 
     def _extract_gt_data(self, recording_number):
         filename = self._folder_prefix+"ros_bags/"+self._file_prefix+str(recording_number)+".bag"
