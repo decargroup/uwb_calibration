@@ -3,17 +3,14 @@ from pyuwbcalib.uwbcalibrate import UwbCalibrate
 from pyuwbcalib.postprocess import PostProcess
 import matplotlib.pyplot as plt
 import numpy as np
-import os
-
-print(os.getcwd())
 
 raw_obj = PostProcess(folder_prefix="datasets/2022_04_20/",
                        file_prefix="formation",
-                       num_of_recordings=1,
+                       num_of_recordings=2,
                        num_meas=-1)
 
-initiator_id = 2
-target_id = 3
+initiator_id = 1
+target_id = 2
 
 raw_obj.visualize_raw_data(pair=(initiator_id,target_id))
 
@@ -25,11 +22,10 @@ calib_obj = UwbCalibrate(raw_obj)
 # %%
 # Implement the Kalman filter and update the estimates
 R = 1
-Q = np.array(([1,0], [0,1]))
+Q = np.array(([1,0], [0,1]))/100
 calib_obj.filter_data(Q, R, visualize = True)
 
 # %%
-
 meas_filtered = calib_obj.compute_range_meas(initiator_id, target_id)
 
 # Calibrate the antenna delays
