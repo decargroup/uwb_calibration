@@ -53,18 +53,18 @@ class PostProcess(object):
         filename = self._folder_prefix+"ros_bags/"+self._file_prefix+str(recording_number)+".bag"
         bag_data = bagreader(filename)
 
-        r = {lv1:np.empty(0) for lv1 in self.tag_ids}
-        C = {lv1:[] for lv1 in self.tag_ids}
-        for lv1 in self.tag_ids:
-            topic_name = '/vrpn_client_node/tripod' + str(lv1) + '/pose'
+        r = {lv0:np.empty(0) for lv0 in self.tag_ids}
+        C = {lv0:[] for lv0 in self.tag_ids}
+        for lv0 in self.tag_ids:
+            topic_name = '/vrpn_client_node/tripod' + str(lv0) + '/pose'
             data = bag_data.message_by_topic(topic_name)
             data_pd = pd.read_csv(data)
 
-            r[lv1] = np.array((data_pd['pose.position.x'],
+            r[lv0] = np.array((data_pd['pose.position.x'],
                                data_pd['pose.position.y'],
                                data_pd['pose.position.z']))
 
-            C[lv1] = R.from_quat(np.array([data_pd['pose.orientation.x'],
+            C[lv0] = R.from_quat(np.array([data_pd['pose.orientation.x'],
                                            data_pd['pose.orientation.y'], 
                                            data_pd['pose.orientation.z'], 
                                            data_pd['pose.orientation.w']]).T)
@@ -137,45 +137,58 @@ class PostProcess(object):
 
         return intervals
 
-    def _unwrap_clock(self, intervals):
+    def _unwrap_all_clocks(self):
         # --------------------- Unwrap dt ---------------------
         # Timestamps are represented as uint32
         max_time_ns = 2**32 * self._to_ns
 
-        intervals["dt"][intervals["dt"] < 0] \
-            = intervals["dt"][intervals["dt"] < 0] + max_time_ns
+        # ------- Unwrap time-stamps --------
+        for recording in range(self.num_of_recordings):
+            for pair in self.ts_data[recording]: 
+                # Check if a clock wrap occured at the first measurement, and unwrap
+                if self.ts_data[recording][pair][:,self.rx2_idx][0] < self.ts_data[recording][pair][:,self.tx1_idx][0]:
+                    self.ts_data[recording][pair][:,self.rx2_idx][0] + max_time_ns
 
-        # ------- Unwrap one-clock-dependent intervals --------
-        wrap_Ra1_bool = intervals["Ra1"] < 0
-        wrap_Ra2_bool = intervals["Ra2"] < 0
-        wrap_Db1_bool = intervals["Db1"] < 0
-        wrap_Db2_bool = intervals["Db2"] < 0
+                if self.ts_data[recording][pair][:,self.tx2_idx][0] < self.ts_data[recording][pair][:,self.rx1_idx][0]:
+                    self.ts_data[recording][pair][:,self.tx2_idx][0] + max_time_ns
 
-        intervals["Ra1"][wrap_Ra1_bool] = intervals["Ra1"][wrap_Ra1_bool] + max_time_ns
-        intervals["S1"][wrap_Ra1_bool] = intervals["S1"][wrap_Ra1_bool] + max_time_ns
-        intervals["Ra2"][wrap_Ra2_bool] = intervals["Ra2"][wrap_Ra2_bool] + max_time_ns
-        intervals["Db1"][wrap_Db1_bool] = intervals["Db1"][wrap_Db1_bool] + max_time_ns
-        intervals["S2"][wrap_Db1_bool] = intervals["S2"][wrap_Db1_bool] + max_time_ns
-        intervals["Db2"][wrap_Db2_bool] = intervals["Db2"][wrap_Db2_bool] + max_time_ns
+                if self.ts_data[recording][pair][:,self.tx3_idx][0] < self.ts_data[recording][pair][:,self.tx2_idx][0]:
+                    self.ts_data[recording][pair][:,self.tx3_idx][0] + max_time_ns
 
-        # ------- Unwrap two-clock-dependent intervals --------
-        intervals["tof1"] = self._wrap_tof(intervals["tof1"], max_time_ns)
-        intervals["tof2"] = self._wrap_tof(intervals["tof2"], max_time_ns)
-        intervals["tof3"] = self._wrap_tof(intervals["tof3"], max_time_ns)
+                if self.ts_data[recording][pair][:,self.rx3_idx][0] < self.ts_data[recording][pair][:,self.rx2_idx][0]:
+                    self.ts_data[recording][pair][:,self.rx3_idx][0] + max_time_ns
 
-        return intervals
+                # Individual unwraps
+                self.ts_data[recording][pair][:,self.tx1_idx] \
+                    = self._unwrap(self.ts_data[recording][pair][:,self.tx1_idx], max_time_ns)
+
+                self.ts_data[recording][pair][:,self.rx1_idx] \
+                    = self._unwrap(self.ts_data[recording][pair][:,self.rx1_idx], max_time_ns)
+
+                self.ts_data[recording][pair][:,self.tx2_idx] \
+                    = self._unwrap(self.ts_data[recording][pair][:,self.tx2_idx], max_time_ns)
+
+                self.ts_data[recording][pair][:,self.rx2_idx] \
+                    = self._unwrap(self.ts_data[recording][pair][:,self.rx2_idx], max_time_ns)
+
+                self.ts_data[recording][pair][:,self.tx3_idx] \
+                    = self._unwrap(self.ts_data[recording][pair][:,self.tx3_idx], max_time_ns)
+
+                self.ts_data[recording][pair][:,self.rx3_idx] \
+                    = self._unwrap(self.ts_data[recording][pair][:,self.rx3_idx], max_time_ns)
 
     @staticmethod
-    def _wrap_tof(tof, max_time_ns):
-        tof_rounded = np.round(tof / 1e6, 0) * 1e6
-        tof_mode = stats.mode(tof_rounded)
-        tof_rounded = tof_rounded - tof_mode.mode
-        idx_wrap = tof_rounded < -1e3
-        tof[idx_wrap] = tof[idx_wrap] + max_time_ns
-        idx_wrap = tof_rounded > 1e3
-        tof[idx_wrap] = tof[idx_wrap] - max_time_ns
+    def _unwrap(data, max):
+        temp = data[1:] - data[:-1]
+        idx = np.concatenate([np.array([0]), temp < 0])
 
-        return tof
+        iter = 0
+        for lv0, _ in enumerate(data):
+            if idx[lv0]:
+                iter += 1
+            data[lv0] += iter*max    
+
+        return data
 
     def _calculate_mean_gt_distance(self,r):
         tag_pairs = combinations(self.tag_ids,2)
@@ -215,16 +228,16 @@ class PostProcess(object):
                 self.ts_data[recording].update(temp_dict)
 
     def _store_time_intervals(self):
+        self._unwrap_all_clocks()
         for recording in range(self.num_of_recordings):
             for pair in self.ts_data[recording]: 
                 temp_dict = self._retrieve_time_intervals(recording,pair)
-                temp_dict = self._unwrap_clock(temp_dict)
                 self.time_intervals[recording].update({pair:temp_dict})
 
     def _store_range_meas_mean(self):
-        for lv1 in range(self.num_of_recordings):
-            self.mean_range_meas[lv1] \
-                = self._calculate_mean_range(self.ts_data[lv1])
+        for lv0 in range(self.num_of_recordings):
+            self.mean_range_meas[lv0] \
+                = self._calculate_mean_range(self.ts_data[lv0])
 
     def _stitch_time_intervals(self, pair):
         all_interv = {}
