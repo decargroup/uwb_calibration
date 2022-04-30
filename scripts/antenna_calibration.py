@@ -4,9 +4,9 @@ from pyuwbcalib.postprocess import PostProcess
 import matplotlib.pyplot as plt
 import numpy as np
 
-raw_obj = PostProcess(folder_prefix="datasets/2022_04_20/",
-                       file_prefix="formation",
-                       num_of_recordings=2,
+raw_obj = PostProcess(folder_prefix="datasets/synthetic/",
+                       file_prefix="synthetic",
+                       num_of_recordings=1,
                        num_meas=-1)
 
 initiator_id = 1

@@ -116,7 +116,7 @@ class PostProcess(object):
 
                 initiator_id = row["from_id"]
                 target_id = row["to_id"]
-                temp = np.array([row["header/stamp"],
+                temp = np.array([row["header.stamp.nsecs"],
                                  row["range"],
                                  row["tx1"]*self._to_ns,
                                  row["rx1"]*self._to_ns,
@@ -124,11 +124,11 @@ class PostProcess(object):
                                  row["rx2"]*self._to_ns,
                                  row["tx3"]*self._to_ns,
                                  row["rx3"]*self._to_ns,
-                                 row["Pr1"],
-                                 row["Pr2"]])
+                                 row["power1"],
+                                 row["power2"]])
 
                 if (initiator_id, target_id) not in ts_data:
-                    ts_data[(initiator_id,target_id)] = np.empty((0,9))
+                    ts_data[(initiator_id,target_id)] = np.empty((0,10))
 
                 ts_data[(initiator_id,target_id)] = \
                             np.vstack((ts_data[(initiator_id,target_id)], temp))
