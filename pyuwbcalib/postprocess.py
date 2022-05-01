@@ -150,7 +150,8 @@ class PostProcess(object):
 
         intervals = {}
 
-        intervals["dt"] = ts[1:,self.tx1_idx] - ts[:-1,self.tx1_idx] # TODO: Replace with ROS timestamp
+        intervals["t"] = ts[:,0]
+        intervals["dt"] = ts[1:,0] - ts[:-1,0]
         intervals["dt"] = np.hstack(([0], intervals["dt"]))
         intervals["Ra1"] = ts[:,self.rx2_idx] - ts[:,self.tx1_idx]
         intervals["Ra2"] = ts[:,self.rx3_idx] - ts[:,self.rx2_idx]
@@ -267,6 +268,7 @@ class PostProcess(object):
 
     def _stitch_time_intervals(self, pair):
         all_interv = {}
+        all_interv["t"] = np.empty(0)
         all_interv["Ra1"] = np.empty(0)
         all_interv["Ra2"] = np.empty(0)
         all_interv["Db1"] = np.empty(0)
@@ -278,6 +280,7 @@ class PostProcess(object):
         all_interv["S2"] = np.empty(0)
         for recording in range(self.num_of_recordings):
             intervals_iter = self.time_intervals[recording][pair]
+            all_interv["t"] = np.hstack((all_interv["t"], intervals_iter["t"]))
             all_interv["Ra1"] = np.hstack((all_interv["Ra1"], intervals_iter["Ra1"]))
             all_interv["Ra2"] = np.hstack((all_interv["Ra2"], intervals_iter["Ra2"]))
             all_interv["Db1"] = np.hstack((all_interv["Db1"], intervals_iter["Db1"]))
@@ -312,9 +315,9 @@ class PostProcess(object):
 
         fig, axs = plt.subplots(1)
 
-        axs.plot(range)
+        axs.plot(all_interv["t"]/1e9, range)
         axs.set_ylabel("Range Measurement [m]")
-        axs.set_xlabel("Measurement Number")
+        axs.set_xlabel("t [s]")
         axs.set_ylim([-1, 10])
 
     def _ds_twr_plotting(self, all_interv):
@@ -323,9 +326,9 @@ class PostProcess(object):
 
         fig, axs = plt.subplots(1)
 
-        axs.plot(range)
+        axs.plot(all_interv["t"]/1e9,range)
         axs.set_ylabel("Range Measurement [m]")
-        axs.set_xlabel("Measurement Number")
+        axs.set_xlabel("t [s]")
         axs.set_ylim([-1, 10])
 
     def visualize_raw_data(self, pair=(1,2)):
@@ -356,10 +359,12 @@ class PostProcess(object):
         col_num = 0
         row_num = 0
         for interv_str in all_interv:
+            if interv_str == "t":
+                continue
             interv = all_interv[interv_str]
-            axs[row_num,col_num].plot(interv)
+            axs[row_num,col_num].plot(all_interv["t"]/1e9,interv)
             axs[row_num,col_num].set_ylabel(interv_str + " [ns]")
-            axs[row_num,col_num].set_xlabel("Measurement Number")
+            axs[row_num,col_num].set_xlabel("t [s]")
 
             if col_num == 2:
                 row_num += 1
@@ -378,19 +383,19 @@ class PostProcess(object):
             axs[i].set_xlim([lift(Pr_l), lift(Pr_h)])
             axs[i].set_ylim([bias_l, bias_u])
 
-        ############################## BIAS AND POWER vs. MEASUREMENT NUMBER ###################################
+        ############################## BIAS AND POWER vs. TIME ###################################
         fig, axs = plt.subplots(3)
 
-        axs[0].plot(bias)
+        axs[0].plot(all_interv["t"],bias)
         axs[0].set_ylabel("Bias [m]")
         axs[0].set_ylim([bias_l, bias_u])
 
         for i, Pr_str in enumerate(all_Pr):
             Pr = all_Pr[Pr_str]
-            axs[i+1].plot(Pr)
+            axs[i+1].plot(all_interv["t"]/1e9,Pr)
             axs[i+1].set_ylabel(Pr_str + " [dBm]")
             axs[i+1].set_ylim([Pr_l, Pr_h])
 
-        axs[i+1].set_xlabel("Measurement Number")
+        axs[i+1].set_xlabel("t [s]")
 
         plt.show()

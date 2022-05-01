@@ -8,9 +8,6 @@ import rospy
 import rosbag
 from uwb_ros.msg import RangeStamped
 from geometry_msgs.msg import PoseStamped
-import os
-
-print(os.getcwd())
 
 df = pd.read_csv('datasets/synthetic/synthetic.csv')
 
@@ -19,7 +16,7 @@ to_ns = 1e9 * (1.0 / 499.2e6 / 128.0) # DW time unit to nanoseconds
 with rosbag.Bag('datasets/synthetic/ros_bags/synthetic1.bag', 'w') as bag:
     for row in range(df.shape[0]):
         ############## UWB 1 ##############
-        timestamp = rospy.Time.from_sec(df['timestamp_1'][row])
+        timestamp = rospy.Time.from_sec(df['timestamp_1'][row]/1e9)
         uwb_msg = RangeStamped()
         uwb_msg.header.stamp = timestamp
 
@@ -39,7 +36,7 @@ with rosbag.Bag('datasets/synthetic/ros_bags/synthetic1.bag', 'w') as bag:
         bag.write("/uwb/range", uwb_msg, timestamp)
 
         ############## UWB 2 ##############
-        timestamp = rospy.Time.from_sec(df['timestamp_2'][row])
+        timestamp = rospy.Time.from_sec(df['timestamp_2'][row]/1e9)
         uwb_msg = RangeStamped()
         uwb_msg.header.stamp = timestamp
 
@@ -59,7 +56,7 @@ with rosbag.Bag('datasets/synthetic/ros_bags/synthetic1.bag', 'w') as bag:
         bag.write("/rpi/uwb/range", uwb_msg, timestamp)
 
         ############## Mocap Data 1 ##############
-        timestamp = rospy.Time.from_sec(df['timestamp_mocap_1'][row])
+        timestamp = rospy.Time.from_sec(df['timestamp_mocap_1'][row]/1e9)
         mocap_msg = PoseStamped()
         mocap_msg.header.stamp = timestamp
 
@@ -77,7 +74,7 @@ with rosbag.Bag('datasets/synthetic/ros_bags/synthetic1.bag', 'w') as bag:
 
 
         ############## Mocap Data 2 ##############
-        timestamp = rospy.Time.from_sec(df['timestamp_mocap_2'][row])
+        timestamp = rospy.Time.from_sec(df['timestamp_mocap_2'][row]/1e9)
         mocap_msg = PoseStamped()
         mocap_msg.header.stamp = timestamp
 
@@ -95,7 +92,7 @@ with rosbag.Bag('datasets/synthetic/ros_bags/synthetic1.bag', 'w') as bag:
 
 
         ############## Mocap Data 3 ##############
-        timestamp = rospy.Time.from_sec(df['timestamp_mocap_3'][row])
+        timestamp = rospy.Time.from_sec(df['timestamp_mocap_3'][row]/1e9)
         mocap_msg = PoseStamped()
         mocap_msg.header.stamp = timestamp
 
