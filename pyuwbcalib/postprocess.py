@@ -7,7 +7,7 @@ from itertools import combinations
 import matplotlib.pyplot as plt
 from scipy.spatial.transform import Rotation as R
 import seaborn as sns
-from scipy import stats
+from scipy.interpolate import interp1d
 
 class PostProcess(object):
     """
@@ -38,20 +38,19 @@ class PostProcess(object):
 
         self.r = {i:[] for i in range(num_of_recordings)}
         self.phi = {i:{} for i in range(num_of_recordings)}
-        self.mean_gt_distance = {i:[] for i in range(num_of_recordings)}
+        self._gt_distance = {i:[] for i in range(num_of_recordings)}
         self.ts_data = {i:{} for i in range(num_of_recordings)}
         self.time_intervals = {i:{} for i in range(num_of_recordings)}
-        self.mean_range_meas = {i:{} for i in range(num_of_recordings)}
 
         self._preprocess_data()
 
     def _preprocess_data(self):
         self._detect_setup()
 
-        self._store_gt_means()
+        self._store_gt_distance()
         self._store_ts_data()
         self._store_time_intervals()
-        self._store_range_meas_mean()
+        self._interpolate_gt_to_uwb() 
 
     def _detect_setup(self):
         # Only read first file
@@ -81,6 +80,7 @@ class PostProcess(object):
         filename = self._folder_prefix+"ros_bags/"+self._file_prefix+str(recording_number)+".bag"
         bag_data = bagreader(filename)
 
+        t = {lv0:np.empty(0) for lv0 in self.tag_ids}
         r = {lv0:np.empty(0) for lv0 in self.tag_ids}
         C = {lv0:[] for lv0 in self.tag_ids}
         for lv0 in self.tag_ids:
@@ -88,6 +88,8 @@ class PostProcess(object):
             data = bag_data.message_by_topic(topic)
             data_pd = pd.read_csv(data)
 
+            t[lv0] = np.array(data_pd['header.stamp.nsecs'])
+            
             r[lv0] = np.array((data_pd['pose.position.x'],
                                data_pd['pose.position.y'],
                                data_pd['pose.position.z']))
@@ -97,7 +99,7 @@ class PostProcess(object):
                                            data_pd['pose.orientation.z'], 
                                            data_pd['pose.orientation.w']]).T)
 
-        return r, C
+        return t, r, C
 
     def _extract_ts_data(self,recording_number):
         filename = self._folder_prefix+"ros_bags/"+self._file_prefix+str(recording_number)+".bag"
@@ -218,36 +220,53 @@ class PostProcess(object):
 
         return data
 
-    def _calculate_mean_gt_distance(self,r):
+    def _calculate_gt_distance(self, t, r):
         tag_pairs = combinations(self.tag_ids,2)
 
-        mean_gt = {(i,j):[] for (i,j) in tag_pairs}
-        for pair in mean_gt:
+        gt = {(i,j):{"t":[],"dist":[]} for (i,j) in tag_pairs}
+        for pair in gt:
             i = pair[0]
             j = pair[1]
 
-            r_i_mean = r[i].mean(axis=1)
-            r_j_mean = r[j].mean(axis=1)
-            mean_gt[pair] = np.linalg.norm(r_i_mean - r_j_mean)
+            r_j_interp = self._interpolate_position(r[j], t[j], t[i])
 
-        return mean_gt
+            gt[pair]["t"] = t[i]
+            gt[pair]["dist"] = np.linalg.norm(r[i] - r_j_interp, axis=0)
 
-    def _calculate_mean_range(self,range_data):
-        dict = {}
-        for pair in range_data:
-            dict[pair] = np.mean(range_data[pair][:,0])
+        return gt
 
-        return dict
+    @staticmethod
+    def _interpolate_position(r, t_old, t_new):
+        
+        f = interp1d(t_old, r, kind='cubic', fill_value='extrapolate')
 
-    def _store_gt_means(self):
+        return f(t_new)
+
+    def _interpolate_gt_to_uwb(self):
+        for recording in self.time_intervals:
+            for pair in self.time_intervals[recording]:
+                t_new = self.time_intervals[recording][pair]["t"]
+                try:
+                    r = self._gt_distance[recording][pair]["dist"]
+                    t_old = self._gt_distance[recording][pair]["t"]
+                except:
+                    r = self._gt_distance[recording][pair[::-1]]["dist"]
+                    t_old = self._gt_distance[recording][pair[::-1]]["t"]
+                
+                f = interp1d(t_old, r, kind='cubic', fill_value='extrapolate')
+
+                self.time_intervals[recording][pair].update({'r_gt': f(t_new)})
+
+
+    def _store_gt_distance(self):
         for recording in range(self.num_of_recordings):
-            r, C = self._extract_gt_data(recording+1)
+            t, r, C = self._extract_gt_data(recording+1)
             self.r[recording] = r
 
             for tag in C:
                 self.phi[recording].update({tag:C[tag].as_rotvec()})
             
-            self.mean_gt_distance[recording] = self._calculate_mean_gt_distance(r)
+            self._gt_distance[recording] = self._calculate_gt_distance(t, r)
         
     def _store_ts_data(self):
         for recording in range(self.num_of_recordings):
@@ -260,11 +279,6 @@ class PostProcess(object):
             for pair in self.ts_data[recording]: 
                 temp_dict = self._retrieve_time_intervals(recording,pair)
                 self.time_intervals[recording].update({pair:temp_dict})
-
-    def _store_range_meas_mean(self):
-        for lv0 in range(self.num_of_recordings):
-            self.mean_range_meas[lv0] \
-                = self._calculate_mean_range(self.ts_data[lv0])
 
     def _stitch_time_intervals(self, pair):
         all_interv = {}
@@ -293,21 +307,29 @@ class PostProcess(object):
 
         return all_interv
 
-    def _stitch_power_and_bias(self, pair):
+    def _stitch_power(self, pair):
         all_Pr = {}
         all_Pr["Pr1"] = np.empty(0)
         all_Pr["Pr2"] = np.empty(0)
-        bias = np.empty(0)
         for recording in range(self.num_of_recordings):
             ts_iter = self.ts_data[recording][pair]
             all_Pr["Pr1"] = np.hstack((all_Pr["Pr1"], ts_iter[:,self.Pr1_idx]))
             all_Pr["Pr2"] = np.hstack((all_Pr["Pr2"], ts_iter[:,self.Pr2_idx]))
-            try:
-                bias = np.hstack((bias, ts_iter[:,self.range_idx] - self.mean_gt_distance[recording][pair]))
-            except:
-                bias = np.hstack((bias, ts_iter[:,self.range_idx] - self.mean_gt_distance[recording][pair[::-1]]))
 
-        return all_Pr, bias
+        return all_Pr
+
+    def _stitch_bias(self, pair):
+        bias = np.empty(0)
+        for recording in range(self.num_of_recordings):
+            ts_iter = self.ts_data[recording][pair]
+            interv_iter = self.time_intervals[recording][pair]
+
+            # try:
+            bias = np.hstack((bias, ts_iter[:,self.range_idx] - interv_iter["r_gt"]))
+            # except:
+                # bias = np.hstack((bias, ts_iter[:,self.range_idx] - self.mean_gt_distance[recording][pair[::-1]]))
+
+        return bias
 
     def _ss_twr_plotting(self, all_interv):
         range = 0.5 * self._c / 1e9 * \
@@ -333,7 +355,8 @@ class PostProcess(object):
 
     def visualize_raw_data(self, pair=(1,2)):
         all_interv = self._stitch_time_intervals(pair)
-        all_Pr, bias = self._stitch_power_and_bias(pair)
+        all_Pr = self._stitch_power(pair)
+        bias = self._stitch_bias(pair)
 
         sns.set_theme()
 
@@ -359,7 +382,7 @@ class PostProcess(object):
         col_num = 0
         row_num = 0
         for interv_str in all_interv:
-            if interv_str == "t":
+            if interv_str == "t" or interv_str == "r_gt":
                 continue
             interv = all_interv[interv_str]
             axs[row_num,col_num].plot(all_interv["t"]/1e9,interv)
