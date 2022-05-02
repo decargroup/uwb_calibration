@@ -1,6 +1,4 @@
-from genericpath import isfile
 import numpy as np
-import ast
 from bagpy import bagreader
 import pandas as pd
 from itertools import combinations
@@ -83,18 +81,20 @@ class PostProcess(object):
         t = {lv0:np.empty(0) for lv0 in self.tag_ids}
         r = {lv0:np.empty(0) for lv0 in self.tag_ids}
         C = {lv0:[] for lv0 in self.tag_ids}
-        for lv0 in self.tag_ids:
-            topic = '/vrpn_client_node/tripod' + str(lv0) + '/pose'
+        for lv0 in range(len(self.tag_ids)): # TODO: Get the rigid bodies automatically
+            topic = '/vrpn_client_node/tripod' + str(lv0+1) + '/pose'
             data = bag_data.message_by_topic(topic)
             data_pd = pd.read_csv(data)
 
-            t[lv0] = np.array(data_pd['header.stamp.nsecs'])
+            id = self.tag_ids[lv0]
+
+            t[id] = np.array(data_pd['header.stamp.nsecs'])
             
-            r[lv0] = np.array((data_pd['pose.position.x'],
+            r[id] = np.array((data_pd['pose.position.x'],
                                data_pd['pose.position.y'],
                                data_pd['pose.position.z']))
 
-            C[lv0] = R.from_quat(np.array([data_pd['pose.orientation.x'],
+            C[id] = R.from_quat(np.array([data_pd['pose.orientation.x'],
                                            data_pd['pose.orientation.y'], 
                                            data_pd['pose.orientation.z'], 
                                            data_pd['pose.orientation.w']]).T)
@@ -189,6 +189,9 @@ class PostProcess(object):
                     self.ts_data[recording][pair][:,self.rx3_idx][0] + max_time_ns
 
                 # Individual unwraps
+                self.ts_data[recording][pair][:,0] \
+                    = self._unwrap(self.ts_data[recording][pair][:,0], 1e9)
+                
                 self.ts_data[recording][pair][:,self.tx1_idx] \
                     = self._unwrap(self.ts_data[recording][pair][:,self.tx1_idx], max_time_ns)
 
@@ -238,7 +241,7 @@ class PostProcess(object):
     @staticmethod
     def _interpolate_position(r, t_old, t_new):
         
-        f = interp1d(t_old, r, kind='cubic', fill_value='extrapolate')
+        f = interp1d(t_old, r, kind='linear', fill_value='extrapolate')
 
         return f(t_new)
 
@@ -253,7 +256,7 @@ class PostProcess(object):
                     r = self._gt_distance[recording][pair[::-1]]["dist"]
                     t_old = self._gt_distance[recording][pair[::-1]]["t"]
                 
-                f = interp1d(t_old, r, kind='cubic', fill_value='extrapolate')
+                f = interp1d(t_old, r, kind='linear', fill_value='extrapolate')
 
                 self.time_intervals[recording][pair].update({'r_gt': f(t_new)})
 
@@ -264,6 +267,7 @@ class PostProcess(object):
             self.r[recording] = r
 
             for tag in C:
+                t[tag] = self._unwrap(t[tag], 1e9)
                 self.phi[recording].update({tag:C[tag].as_rotvec()})
             
             self._gt_distance[recording] = self._calculate_gt_distance(t, r)
@@ -331,27 +335,40 @@ class PostProcess(object):
 
         return bias
 
-    def _ss_twr_plotting(self, all_interv):
+    def _ss_twr_plotting(self, all_interv, pair):
         range = 0.5 * self._c / 1e9 * \
             (all_interv["Ra1"] - all_interv["Db1"])
 
         fig, axs = plt.subplots(1)
 
-        axs.plot(all_interv["t"]/1e9, range)
-        axs.set_ylabel("Range Measurement [m]")
+        axs.plot(all_interv["t"]/1e9, range, label='Range Measurements')
+        axs.scatter(self._gt_distance[0][(pair)]["t"]/1e9, 
+                    self._gt_distance[0][(pair)]["dist"], 
+                    s=1,
+                    label='Ground Truth')
+        
+        axs.set_ylabel("Distance [m]")
         axs.set_xlabel("t [s]")
-        axs.set_ylim([-1, 10])
+        axs.set_ylim([-1, 5])
 
-    def _ds_twr_plotting(self, all_interv):
+        axs.legend()
+
+    def _ds_twr_plotting(self, all_interv, pair):
         range = 0.5 * self._c / 1e9 * \
             (all_interv["Ra1"] - (all_interv["Ra2"] / all_interv["Db2"]) * all_interv["Db1"])
 
         fig, axs = plt.subplots(1)
 
-        axs.plot(all_interv["t"]/1e9,range)
-        axs.set_ylabel("Range Measurement [m]")
+        axs.plot(all_interv["t"]/1e9, range, label='Range Measurements')
+        axs.scatter(self._gt_distance[0][(pair)]["t"]/1e9, \
+                    self._gt_distance[0][(pair)]["dist"], s=1, \
+                    label='Ground Truth', color='r')
+
+        axs.set_ylabel("Distance [m]")
         axs.set_xlabel("t [s]")
-        axs.set_ylim([-1, 10])
+        axs.set_ylim([-1, 5])
+
+        axs.legend()
 
     def visualize_raw_data(self, pair=(1,2)):
         all_interv = self._stitch_time_intervals(pair)
@@ -372,9 +389,9 @@ class PostProcess(object):
 
         ####################################### RANGE MEASUREMENTS #############################################
         if self.mult_twr:
-            self._ds_twr_plotting(all_interv)
+            self._ds_twr_plotting(all_interv, pair)
         else:
-            self._ss_twr_plotting(all_interv)
+            self._ss_twr_plotting(all_interv, pair)
 
         ######################################### TIME INTERVALS ###############################################
         fig, axs = plt.subplots(3,3)
@@ -403,15 +420,15 @@ class PostProcess(object):
             axs[i].scatter(lift(Pr),bias,s=1)
             axs[i].set_ylabel("Bias [m]")
             axs[i].set_xlabel("$f("+ Pr_str + ")$ [dBm]")
-            axs[i].set_xlim([lift(Pr_l), lift(Pr_h)])
-            axs[i].set_ylim([bias_l, bias_u])
+            # axs[i].set_xlim([lift(Pr_l), lift(Pr_h)])
+            # axs[i].set_ylim([bias_l, bias_u])
 
         ############################## BIAS AND POWER vs. TIME ###################################
         fig, axs = plt.subplots(3)
 
-        axs[0].plot(all_interv["t"],bias)
+        axs[0].plot(all_interv["t"]/1e9,bias)
         axs[0].set_ylabel("Bias [m]")
-        axs[0].set_ylim([bias_l, bias_u])
+        # axs[0].set_ylim([bias_l, bias_u])
 
         for i, Pr_str in enumerate(all_Pr):
             Pr = all_Pr[Pr_str]
