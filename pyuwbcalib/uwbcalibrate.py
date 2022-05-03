@@ -44,23 +44,19 @@ class UwbCalibrate(object):
 
         self.num_of_tags = processed_data.num_of_tags
 
-        self.r = processed_data.r
-        self.phi = processed_data.phi
-        self.mean_gt_distance = processed_data.mean_gt_distance
         self.ts_data = processed_data.ts_data
         self.time_intervals = processed_data.time_intervals
-        self.mean_range_meas = processed_data.mean_range_meas
 
-        self.range_idx = 0
-        self.tx1_idx = 1
-        self.rx1_idx = 2
-        self.tx2_idx = 3
-        self.rx2_idx = 4
-        self.tx3_idx = 5
-        self.rx3_idx = 6
-        self.Pr1_idx = 7
-        self.Pr2_idx = 8
-
+        self.range_idx = 1
+        self.tx1_idx = 2
+        self.rx1_idx = 3
+        self.tx2_idx = 4
+        self.rx2_idx = 5
+        self.tx3_idx = 6
+        self.rx3_idx = 7
+        self.Pr1_idx = 8
+        self.Pr2_idx = 9
+        
         if not outliers:
             self._remove_outliers()
 
@@ -178,7 +174,7 @@ class UwbCalibrate(object):
             for lv1, pair in enumerate(self.time_intervals[recording]):
                 x_hist, y_hist, P_hist = self._clock_filter(recording, pair, Q, R)
                 
-                # self._update_intervals() # TODO:
+                self._update_tof_intervals(recording, pair, x_hist[0,:])
 
                 if visualize: 
                     self._plot_kf(x_hist, y_hist, P_hist, axs[lv0,lv1])
@@ -186,18 +182,30 @@ class UwbCalibrate(object):
         if visualize:
             plt.show()
 
+    def _update_tof_intervals(self, recording, pair, tau):
+        # TODO: Take uncertainty into consideration?
+        self.time_intervals[recording][pair]["tof1"] \
+            = self.time_intervals[recording][pair]["tof1"] + tau
+
+        self.time_intervals[recording][pair]["tof2"] \
+            = self.time_intervals[recording][pair]["tof2"] - tau
+
+        if self.mult_twr:
+            self.time_intervals[recording][pair]["tof3"] \
+                = self.time_intervals[recording][pair]["tof3"] - tau
+
     @staticmethod
     def _plot_kf(x, y, P, axs):
         axs.plot(x[0,:])
 
-        axs.ticklabel_format(style='plain') #This is the line you need <-------
+        axs.ticklabel_format(style='plain')
 
         axs.plot(y, color='red')
         
-        # P_iter = P[1,1,:]
-        # P_iter = P_iter.reshape(-1,)
-        # axs.plot(x[0,:] + 3*np.sqrt(P_iter))
-        # axs.plot(x[0,:] + -3*np.sqrt(P_iter))
+        P_iter = P[1,1,:]
+        P_iter = P_iter.reshape(-1,)
+        axs.plot(x[0,:] + 3*np.sqrt(P_iter))
+        axs.plot(x[0,:] - 3*np.sqrt(P_iter))
 
     def _clock_filter(self, recording, pair, Q, R):
         # Intervals
@@ -218,7 +226,7 @@ class UwbCalibrate(object):
         skew = 0
         x = np.array([tau, skew])
         x = x.reshape(2,1)
-        P = np.array(([1e18,0],[0,1e12])) # TODO: better estimate of initial uncertainty
+        P = np.array(([1e9,0],[0,1e12])) # TODO: better estimate of initial uncertainty
 
         for lv0, dt_iter in enumerate(dt):
             Ra2_iter = Ra2[lv0]
@@ -229,7 +237,7 @@ class UwbCalibrate(object):
             if lv0>0:
                 x, P = self._propagate_clocks(x, P, dt_iter, Q)
 
-            y = self._compute_pseudomeasurement(Ra2_iter, Db2_iter, S1_iter, S2_iter)
+            y = self._compute_pseudomeasurement(Ra2_iter*0+1, Db2_iter*0+1, S1_iter, S2_iter)
             x, P = self._correct_clocks(x, P, y, R)
 
             x_hist[:,lv0] = x.reshape(2,)
@@ -259,12 +267,12 @@ class UwbCalibrate(object):
 
     @staticmethod
     def _propagate_clocks(x, P, dt, Q):
-        dt = dt/1e9
+        dt = dt
         A = np.array(([1, dt], [0, 1]))
         L = np.array(([dt, 0.5*dt**2], [0, dt]))
 
         x_new = A @ x
-        P_new = A @ P @ A.T + L @ Q @ L.T
+        P_new = A @ P @ A.T + 1/dt * L @ Q @ L.T
         
         return x_new, P_new
 
@@ -333,27 +341,34 @@ class UwbCalibrate(object):
             elif int(key.partition(">")[2]) == id:
                 self.data[key]["Db1"] = self.data[key]["Db1"] - delay
 
-    def compute_range_meas(self, id1, id2):
-        """
-        Only supports reverse double-sided TWR.
-        TODO: support more TWR types, such as single-sided TWR.
-        """
-        for key in self.data:
-            cond1 = (
-                int(key.partition("-")[0]) == id1 and int(key.partition(">")[2]) == id2
-            )
-            cond2 = (
-                int(key.partition("-")[0]) == id2 and int(key.partition(">")[2]) == id1
-            )
-            if cond1 or cond2:
-                temp = self.data[key]
-                if self.twr_type == 0:
-                    temp = 0.5 * self._c * (temp["Ra1"] - temp["Db1"]) / 1e9
-                else:
-                    temp = (
-                        0.5
-                        * self._c
-                        * (temp["Ra1"] - (temp["Ra2"] / temp["Db2"]) * temp["Db1"])
-                        / 1e9
-                    )
-                return temp
+    def compute_range_meas(self, pair=(1,2), visualize=False, owr = False):
+        #TODO: Inherit this function from PostProcess?
+        interv = self.time_intervals[0][pair]
+        if owr and self.mult_twr:
+            range = 1/3 * self._c / 1e9 \
+                    * (abs(interv["tof1"]) \
+                       + abs(interv["tof2"]) \
+                       + abs(interv["tof3"]))
+        elif owr:
+            range = 1/2 * self._c / 1e9 \
+                    * (abs(interv["tof1"]) \
+                       + abs(interv["tof2"]))
+        elif self.mult_twr:
+            range = 0.5 * self._c / 1e9 * \
+                (interv["Ra1"] - (interv["Ra2"] / interv["Db2"]) * interv["Db1"])
+        else:
+            range = 0.5 * self._c / 1e9 * \
+                (interv["Ra1"] - interv["Db1"])
+
+        if visualize:
+            fig, axs = plt.subplots(1)
+
+            axs.plot(interv["t"]/1e9, range, label='Range Measurements')
+
+            axs.set_ylabel("Distance [m]")
+            axs.set_xlabel("t [s]")
+            axs.set_ylim([-1, 5])
+
+            plt.show()
+
+        return range
