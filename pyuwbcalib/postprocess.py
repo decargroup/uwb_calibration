@@ -78,6 +78,7 @@ class PostProcess(object):
         filename = self._folder_prefix+"ros_bags/"+self._file_prefix+str(recording_number)+".bag"
         bag_data = bagreader(filename)
 
+        t_sec = {lv0:np.empty(0) for lv0 in self.tag_ids}
         t = {lv0:np.empty(0) for lv0 in self.tag_ids}
         r = {lv0:np.empty(0) for lv0 in self.tag_ids}
         C = {lv0:[] for lv0 in self.tag_ids}
@@ -88,6 +89,7 @@ class PostProcess(object):
 
             id = self.tag_ids[lv0]
 
+            t_sec[id] = np.array(data_pd['header.stamp.secs'])
             t[id] = np.array(data_pd['header.stamp.nsecs'])
             
             r[id] = np.array((data_pd['pose.position.x'],
@@ -99,7 +101,7 @@ class PostProcess(object):
                                            data_pd['pose.orientation.z'], 
                                            data_pd['pose.orientation.w']]).T)
 
-        return t, r, C
+        return t_sec, t, r, C
 
     def _extract_ts_data(self,recording_number):
         filename = self._folder_prefix+"ros_bags/"+self._file_prefix+str(recording_number)+".bag"
@@ -263,15 +265,25 @@ class PostProcess(object):
 
     def _store_gt_distance(self):
         for recording in range(self.num_of_recordings):
-            t, r, C = self._extract_gt_data(recording+1)
+            t_sec, t, r, C = self._extract_gt_data(recording+1)
             self.r[recording] = r
 
             for tag in C:
-                t[tag] = self._unwrap(t[tag], 1e9)
+                t[tag] = self._unwrap_gt(t_sec[tag], t[tag], 1e9)
                 self.phi[recording].update({tag:C[tag].as_rotvec()})
             
             self._gt_distance[recording] = self._calculate_gt_distance(t, r)
         
+    @staticmethod
+    def _unwrap_gt(t_sec, t, max):
+        iter = 0
+        for lv0 in range(len(t)-1):
+            if t_sec[lv0+1] - t_sec[lv0] > 0:
+                iter += t_sec[lv0+1] - t_sec[lv0]
+            t[lv0+1] += iter*max    
+
+        return t
+
     def _store_ts_data(self):
         for recording in range(self.num_of_recordings):
             temp_dict = self._extract_ts_data(recording+1)
