@@ -11,8 +11,8 @@ raw_obj = PostProcess(folder_prefix="datasets/2022_05_02/",
                       tag_ids=[4,1,3])
 
 # %%
-initiator_id = 1
-target_id = 3
+initiator_id = 4
+target_id = 1
 pair = (initiator_id, target_id)
 # raw_obj.visualize_raw_data(pair=(initiator_id,target_id))
 
@@ -25,9 +25,9 @@ meas_old = calib_obj.compute_range_meas(pair,
 
 # %%
 # Implement the Kalman filter and update the estimates
-R = 1
-Q = np.array(([1,0], [0,1]))
-calib_obj.filter_data(Q, R, visualize = False)
+R = 20
+Q = np.array(([0.4,0], [0,640]))
+calib_obj.filter_data(Q, R, visualize = True)
 
 meas_filtered = calib_obj.compute_range_meas(pair,
                                              visualize=False, owr=True)

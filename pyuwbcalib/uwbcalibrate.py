@@ -172,12 +172,22 @@ class UwbCalibrate(object):
 
         for lv0, recording in enumerate(self.time_intervals):
             for lv1, pair in enumerate(self.time_intervals[recording]):
-                x_hist, y_hist, P_hist = self._clock_filter(recording, pair, Q, R)
+                x_hist, P_hist = self._clock_filter(recording, pair, Q, R)
                 
                 self._update_tof_intervals(recording, pair, x_hist[0,:])
 
                 if visualize: 
-                    self._plot_kf(x_hist, y_hist, P_hist, axs[lv0,lv1])
+                    Ra2 = self.time_intervals[recording][pair]["Ra2"]
+                    Db2 = self.time_intervals[recording][pair]["Db2"]
+                    S1 = self.time_intervals[recording][pair]["S1"]
+                    S2 = self.time_intervals[recording][pair]["S2"]
+                    Db1 = self.time_intervals[recording][pair]["Db1"]
+                    y1 = 0.5*(S1 - S2)
+                    y2 = Db2 - Ra2
+                    y_tau = - y1 - 0.5*(Db1/(Db2-Db1))*y2
+                    # axs[lv0,lv1].plot(-y_tau)
+
+                    self._plot_kf(x_hist, P_hist, axs[lv0,lv1], y_tau)
 
         if visualize:
             plt.show()
@@ -185,27 +195,25 @@ class UwbCalibrate(object):
     def _update_tof_intervals(self, recording, pair, tau):
         # TODO: Take uncertainty into consideration?
         self.time_intervals[recording][pair]["tof1"] \
-            = self.time_intervals[recording][pair]["tof1"] + tau
+            = self.time_intervals[recording][pair]["tof1"] - tau
 
         self.time_intervals[recording][pair]["tof2"] \
-            = self.time_intervals[recording][pair]["tof2"] - tau
+            = self.time_intervals[recording][pair]["tof2"] + tau
 
         if self.mult_twr:
             self.time_intervals[recording][pair]["tof3"] \
-                = self.time_intervals[recording][pair]["tof3"] - tau
+                = self.time_intervals[recording][pair]["tof3"] + tau
 
     @staticmethod
-    def _plot_kf(x, y, P, axs):
-        axs.plot(x[0,:])
+    def _plot_kf(x, P, axs, y_tau):
+        axs.plot(x[0,:]-y_tau)
 
         axs.ticklabel_format(style='plain')
-
-        axs.plot(y, color='red')
         
-        P_iter = P[1,1,:]
-        P_iter = P_iter.reshape(-1,)
-        axs.plot(x[0,:] + 3*np.sqrt(P_iter))
-        axs.plot(x[0,:] - 3*np.sqrt(P_iter))
+        # P_iter = P[1,1,:]
+        # P_iter = P_iter.reshape(-1,)
+        # axs.plot(x[0,:] + 3*np.sqrt(P_iter))
+        # axs.plot(x[0,:] - 3*np.sqrt(P_iter))
 
     def _clock_filter(self, recording, pair, Q, R):
         # Intervals
@@ -214,11 +222,11 @@ class UwbCalibrate(object):
         Db2 = self.time_intervals[recording][pair]["Db2"]
         S1 = self.time_intervals[recording][pair]["S1"]
         S2 = self.time_intervals[recording][pair]["S2"]
+        Db1 = self.time_intervals[recording][pair]["Db1"]
 
         # Storage variables
         n = dt.size
         x_hist = np.zeros((2,n))
-        y_hist = np.zeros((1,n))
         P_hist = np.zeros((2,2,n))
 
         # Initial estimate and uncertainty
@@ -226,38 +234,48 @@ class UwbCalibrate(object):
         skew = 0
         x = np.array([tau, skew])
         x = x.reshape(2,1)
-        P = np.array(([1e9,0],[0,1e12])) # TODO: better estimate of initial uncertainty
+        P = np.array(([1e24,0],[0,1e24])) # TODO: better estimate of initial uncertainty
 
         for lv0, dt_iter in enumerate(dt):
             Ra2_iter = Ra2[lv0]
             Db2_iter = Db2[lv0]
             S1_iter = S1[lv0]
             S2_iter = S2[lv0]
-            
+            Db1_iter = Db1[lv0]
+
             if lv0>0:
                 x, P = self._propagate_clocks(x, P, dt_iter, Q)
+                P = 0.5*(P + P.T)
 
-            y = self._compute_pseudomeasurement(Ra2_iter*0+1, Db2_iter*0+1, S1_iter, S2_iter)
-            x, P = self._correct_clocks(x, P, y, R)
+            y = self._compute_pseudomeasurement(Ra2_iter, Db2_iter, S1_iter, S2_iter, Db1_iter)
+            x, P = self._correct_clocks(x, P, y, R, Db1_iter, Db2_iter)
+            P = 0.5*(P + P.T)
 
             x_hist[:,lv0] = x.reshape(2,)
-            y_hist[0,lv0] = y
             P_hist[:,:,lv0] = P
 
-        return x_hist, y_hist, P_hist
+        return x_hist, P_hist
 
     @staticmethod
-    def _compute_pseudomeasurement(Ra2, Db2, S1, S2):
-        return 0.5*(S1 - Ra2/Db2 * S2)
+    def _compute_pseudomeasurement(Ra2, Db2, S1, S2, Db1):
+        y1 = 0.5*(S1 - S2)
+        y2 = Db2 - Ra2
+        # return np.array([y1, y2]).reshape(2,1)
+        y = - y1 - 0.5*(Db1/(Db2-Db1))*y2
+        return y
 
     @staticmethod
-    def _correct_clocks(x, P, y, R):
-        C = np.array(([1,0]))
+    def _correct_clocks(x, P, y, R, Db1, Db2):
+        # C = np.array([[-1,0.5*Db1/1e9], [0, -Db2/1e9]])
+        C = np.array([1, 0])
         C = C.reshape(1,2)
 
         y_check = C @ x
 
-        S = C @ P @ C.T + R
+        # R_matrix = np.array([[1.25*R, 0.5*R], [0.5*R, 2*R]])
+        R_matrix = R
+
+        S = C @ P @ C.T + R_matrix
         K = P @ C.T @ inv(S)
 
         x_new = x + K @ (y - y_check)
@@ -267,12 +285,12 @@ class UwbCalibrate(object):
 
     @staticmethod
     def _propagate_clocks(x, P, dt, Q):
-        dt = dt
+        dt = dt/1e9
         A = np.array(([1, dt], [0, 1]))
         L = np.array(([dt, 0.5*dt**2], [0, dt]))
 
         x_new = A @ x
-        P_new = A @ P @ A.T + 1/dt * L @ Q @ L.T
+        P_new = A @ P @ A.T + L @ Q @ L.T
         
         return x_new, P_new
 
@@ -345,10 +363,10 @@ class UwbCalibrate(object):
         #TODO: Inherit this function from PostProcess?
         interv = self.time_intervals[0][pair]
         if owr and self.mult_twr:
-            range = 1/3 * self._c / 1e9 \
+            range = 1/2 * self._c / 1e9 \
                     * (abs(interv["tof1"]) \
                        + abs(interv["tof2"]) \
-                       + abs(interv["tof3"]))
+                       + 0*abs(interv["tof3"]))
         elif owr:
             range = 1/2 * self._c / 1e9 \
                     * (abs(interv["tof1"]) \
