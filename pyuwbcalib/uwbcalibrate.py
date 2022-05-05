@@ -296,7 +296,21 @@ class UwbCalibrate(object):
         
         return x_new, P_new
 
-    def fit_gp(self, pair):
+    @staticmethod
+    def _rolling_window(a, window):
+        '''
+        Copied from 
+        https://stackoverflow.com/questions/27427618/how-can-i-simply-calculate-the-rolling-moving-variance-of-a-time-series-in-pytho
+        '''
+        pad = np.ones(len(a.shape), dtype=np.int32)
+        pad[-1] = window-1
+        pad = list(zip(pad, np.zeros(len(a.shape), dtype=np.int32)))
+        a = np.pad(a, pad,mode='reflect')
+        shape = a.shape[:-1] + (a.shape[-1] - window + 1, window)
+        strides = a.strides + (a.strides[-1],)
+        return np.lib.stride_tricks.as_strided(a, shape=shape, strides=strides)
+
+    def fit_gp(self, pair): # TODO: DO I REALLY NEED TO DO A GP? COULD DO SOMETHING SIMPLER
         kernel = 1 * RBF(length_scale=1)
         # kernel = DotProduct() * WhiteKernel()
         # kernel = Matern(nu=2.5)
@@ -306,32 +320,63 @@ class UwbCalibrate(object):
 
         bias = self.ts_data[0][pair][:,self.range_idx] - self.time_intervals[0][pair]["r_gt"]
         lifted_pr = lift(self.ts_data[0][pair][:,self.Pr1_idx])
+        r_gt_unsorted = self.time_intervals[0][pair]["r_gt"]
+
+        ## TODO: REMOVE THIS ONCE PROPER OUTLIER DETECTION IS IMPLEMENTED
+        thresh = 0.6
+        keep_idx = np.logical_and(bias < thresh, lifted_pr < 1.5)
+        bias = bias[keep_idx]
+        lifted_pr = lifted_pr[keep_idx]
+        r_gt_unsorted = r_gt_unsorted[keep_idx]
+        bias = bias[350:-200]
+        lifted_pr = lifted_pr[350:-200]
+        r_gt_unsorted = r_gt_unsorted[350:-200]
 
         gpr = GaussianProcessRegressor(kernel=kernel, alpha = 0.15**2, n_restarts_optimizer=1,
                                        random_state=0).fit(lifted_pr.reshape(-1,1), bias.reshape(-1,1))
 
         print(gpr.score(lifted_pr.reshape(-1,1), bias.reshape(-1,1)))
 
-        ## Visualize
-        x = np.linspace(0.01,1.75,100)
-        mean_prediction, std_prediction = gpr.predict(x.reshape(-1,1), return_std=True)
+        # rolling var along last axis
+        sort_pr = np.argsort(lifted_pr)
+        bias = bias[sort_pr]
+        lifted_pr = lifted_pr[sort_pr]
+        r_gt = r_gt_unsorted[sort_pr]
+        bias_std = np.std(self._rolling_window(bias.ravel(), 50), axis=-1)
+        bias_std = np.mean(self._rolling_window(bias_std.ravel(), 175), axis=-1)
+
+        ## Visualize GP fit
+        mean_prediction, std_prediction = gpr.predict(lifted_pr.reshape(-1,1), return_std=True)
 
         print(std_prediction)
 
-        plt.scatter(lifted_pr, bias, label=r"Raw data", linestyle="dotted", s=1)
-        # plt.scatter(X_train, y_train, label="Observations")
-        plt.plot(x, mean_prediction, label="Fit")
-        # plt.fill_between(
-        #     x.ravel(),
-        #     mean_prediction.ravel() - 3 * std_prediction,
-        #     mean_prediction.ravel() + 3 * std_prediction,
-        #     alpha=0.5,
-        #     label=r"99.7% confidence interval",
-        # )
-        plt.legend()
-        plt.xlabel("$P_r$ [dBm]")
-        plt.ylabel("Bias [m]")
-        # _ = plt.title("Gaussian process regression on noise-free dataset")
+        # PLOTTING
+        fig, axs = plt.subplots(3,1)
+
+        axs[0].scatter(lifted_pr, bias, label=r"Raw data", linestyle="dotted", s=1)
+        # axs[0].scatter(X_train, y_train, label="Observations")
+        axs[0].plot(lifted_pr, mean_prediction, label="Fit")
+        axs[0].fill_between(
+            lifted_pr.ravel(),
+            mean_prediction.ravel() - 1.96 * bias_std,
+            mean_prediction.ravel() + 1.96 * bias_std,
+            alpha=0.5,
+            label=r"95% confidence interval",
+        )
+        axs[0].legend()
+        axs[0].set_xlabel("$f(P_r)$")
+        axs[0].set_ylabel("Bias [m]")
+        # _ = axs[0].title("Gaussian process regression on noise-free dataset")
+
+        ## Visualize std vs. Power
+        axs[1].plot(lifted_pr, bias_std)
+        axs[1].set_xlabel("$f(P_r)$")
+        axs[1].set_ylabel("Bias std [m]")
+
+        ## Visualize std vs. distance
+        axs[2].scatter(r_gt, bias_std, s=1)
+        axs[2].set_xlabel("Ground truth distance [m]")
+        axs[2].set_ylabel("Bias std [m]")
 
         plt.show()
 

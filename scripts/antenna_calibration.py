@@ -14,8 +14,8 @@ raw_obj = PostProcess(folder_prefix="datasets/2022_05_02/",
 kf = False
 GP = True
 antenna_delay = False
-initiator_id = 4
-target_id = 1
+initiator_id = 1
+target_id = 3
 pair = (initiator_id, target_id)
 # raw_obj.visualize_raw_data(pair=(initiator_id,target_id))
 
