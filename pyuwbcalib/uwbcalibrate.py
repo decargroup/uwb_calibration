@@ -1,6 +1,8 @@
 import numpy as np
 from numpy.linalg import inv
 import matplotlib.pyplot as plt
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, WhiteKernel, Matern, DotProduct
 
 class UwbCalibrate(object):
     """
@@ -294,7 +296,45 @@ class UwbCalibrate(object):
         
         return x_new, P_new
 
-            
+    def fit_gp(self, pair):
+        kernel = 1 * RBF(length_scale=1)
+        # kernel = DotProduct() * WhiteKernel()
+        # kernel = Matern(nu=2.5)
+
+        alpha = -82 # TODO: Copy this over from PostProcess
+        lift = lambda x: 10**((x - alpha) /10)
+
+        bias = self.ts_data[0][pair][:,self.range_idx] - self.time_intervals[0][pair]["r_gt"]
+        lifted_pr = lift(self.ts_data[0][pair][:,self.Pr1_idx])
+
+        gpr = GaussianProcessRegressor(kernel=kernel, alpha = 0.15**2, n_restarts_optimizer=1,
+                                       random_state=0).fit(lifted_pr.reshape(-1,1), bias.reshape(-1,1))
+
+        print(gpr.score(lifted_pr.reshape(-1,1), bias.reshape(-1,1)))
+
+        ## Visualize
+        x = np.linspace(0.01,1.75,100)
+        mean_prediction, std_prediction = gpr.predict(x.reshape(-1,1), return_std=True)
+
+        print(std_prediction)
+
+        plt.scatter(lifted_pr, bias, label=r"Raw data", linestyle="dotted", s=1)
+        # plt.scatter(X_train, y_train, label="Observations")
+        plt.plot(x, mean_prediction, label="Fit")
+        # plt.fill_between(
+        #     x.ravel(),
+        #     mean_prediction.ravel() - 3 * std_prediction,
+        #     mean_prediction.ravel() + 3 * std_prediction,
+        #     alpha=0.5,
+        #     label=r"99.7% confidence interval",
+        # )
+        plt.legend()
+        plt.xlabel("$P_r$ [dBm]")
+        plt.ylabel("Bias [m]")
+        # _ = plt.title("Gaussian process regression on noise-free dataset")
+
+        plt.show()
+
     def calibrate_antennas(self):
         """
         Calibrate the antenna delays by formulating and solving a linear least-squares problem.
