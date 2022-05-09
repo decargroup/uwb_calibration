@@ -81,18 +81,17 @@ class UwbCalibrate(object):
         --------
         np.array: The K values for all the measurements.
         """
-        str_temp = (
-            str(self.board_ids[initiating_idx]) + "->" + str(self.board_ids[target_idx])
-        )
-        data = self.data[str_temp]
+        initiating_id = self.tag_ids[initiating_idx]
+        target_id = self.tag_ids[target_idx]
+        pair = (initiating_id, target_id)
 
-        Ra2 = data["Ra2"]
-        Db2 = data["Db2"]
+        Ra2 = self.time_intervals[0][pair]["Ra2"]
+        Db2 = self.time_intervals[0][pair]["Db2"]
 
-        if self.twr_type == 0:
-            return Ra2 / Ra2
-        else:
+        if self.mult_twr:
             return Ra2 / Db2
+        else:
+            return Ra2 / Ra2
 
     def _setup_A_matrix(self, K, initiating_idx, target_idx):
         """
@@ -135,14 +134,13 @@ class UwbCalibrate(object):
         --------
         np.array: The b vector.
         """
-        str_temp = (
-            str(self.board_ids[initiating_idx]) + "->" + str(self.board_ids[target_idx])
-        )
-        data = self.data[str_temp]
+        initiating_id = self.tag_ids[initiating_idx]
+        target_id = self.tag_ids[target_idx]
+        pair = (initiating_id, target_id)
 
-        gt = data["gt"]
-        Ra1 = data["Ra1"]
-        Db1 = data["Db1"]
+        gt = self.time_intervals[0][pair]["r_gt"]
+        Ra1 = self.time_intervals[0][pair]["Ra1"]
+        Db1 = self.time_intervals[0][pair]["Db1"]
 
         b = 1 / self._c * gt * 1e9 - 0.5 * (Ra1) + 0.5 * K * (Db1)
 
@@ -318,7 +316,7 @@ class UwbCalibrate(object):
         r_gt_unsorted = self.time_intervals[0][pair]["r_gt"]
 
         ## TODO: REMOVE THIS ONCE PROPER OUTLIER DETECTION IS IMPLEMENTED
-        thresh = 0.75
+        thresh = 10
         keep_idx = np.logical_and(bias < thresh, lifted_pr < 1.5)
         bias = bias[keep_idx]
         lifted_pr = lifted_pr[keep_idx]
@@ -408,9 +406,9 @@ class UwbCalibrate(object):
         print(np.linalg.norm(b - A * np.array([x[0], x[1], x[2]])))
 
         return {
-            "Module " + str(self.board_ids[0]): x[0],
-            "Module " + str(self.board_ids[1]): x[1],
-            "Module " + str(self.board_ids[2]): x[2],
+            self.tag_ids[0]: x[0],
+            self.tag_ids[1]: x[1],
+            self.tag_ids[2]: x[2],
         }
 
     def correct_antenna_delay(self, id, delay):
@@ -429,11 +427,11 @@ class UwbCalibrate(object):
               We might have to calibrate for TX and RX delays separately
               if we are to proceed with Kalman filtering with this architecture.
         """
-        for key in self.data:
-            if int(key.partition("-")[0]) == id:
-                self.data[key]["Ra1"] = self.data[key]["Ra1"] + delay
-            elif int(key.partition(">")[2]) == id:
-                self.data[key]["Db1"] = self.data[key]["Db1"] - delay
+        for key in self.time_intervals[0]:
+            if key[0] == id:
+                self.time_intervals[0][key]["Ra1"] += delay
+            elif key[1] == id:
+                self.time_intervals[0][key]["Db1"] -= delay
 
     def compute_range_meas(self, pair=(1,2), visualize=False, owr = False):
         #TODO: Inherit this function from PostProcess?

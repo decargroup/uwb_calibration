@@ -4,7 +4,6 @@ import pandas as pd
 from itertools import combinations
 import matplotlib.pyplot as plt
 from scipy.spatial.transform import Rotation as R
-import seaborn as sns
 from scipy.interpolate import interp1d
 
 class PostProcess(object):
@@ -386,8 +385,6 @@ class PostProcess(object):
         all_interv = self._stitch_time_intervals(pair)
         all_Pr = self._stitch_power(pair)
         bias = self._stitch_bias(pair)
-
-        sns.set_theme()
 
         # Justin's lifting function
         alpha = -82 # TODO: make a function of the measured power data

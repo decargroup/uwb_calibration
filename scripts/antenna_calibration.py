@@ -3,19 +3,23 @@ from pyuwbcalib.uwbcalibrate import UwbCalibrate
 from pyuwbcalib.postprocess import PostProcess
 import matplotlib.pyplot as plt
 import numpy as np
+import seaborn as sns
 
+sns.set_theme()
+
+tag_ids=[4,1,3] # in the order of tripod1, tripod2, tripod3
 raw_obj = PostProcess(folder_prefix="datasets/2022_05_02/",
                       file_prefix="test",
                       num_of_recordings=1,
                       num_meas=-1,
-                      tag_ids=[4,1,3])
+                      tag_ids=tag_ids)
 
 # %%
 kf = False
 power_calib = True
-antenna_delay = False
-initiator_id = 4
-target_id = 1
+antenna_delay = True
+initiator_id = 1
+target_id = 3
 pair = (initiator_id, target_id)
 # raw_obj.visualize_raw_data(pair=(initiator_id,target_id))
 
@@ -56,22 +60,36 @@ if antenna_delay: # TODO: Set this up based on Python's robust least squares pac
     # Calibrate the antenna delays
     delays = calib_obj.calibrate_antennas()
     print(delays)
-    calib_obj.correct_antenna_delay(1, delays["Module 1"])
-    calib_obj.correct_antenna_delay(2, delays["Module 2"])
-    calib_obj.correct_antenna_delay(3, delays["Module 3"])
 
-    meas_new = calib_obj.compute_range_meas(initiator_id, target_id)
+    id0 = tag_ids[0]
+    id1 = tag_ids[1]
+    id2 = tag_ids[2]
+    calib_obj.correct_antenna_delay(id0, delays[id0])
+    calib_obj.correct_antenna_delay(id1, delays[id1])
+    calib_obj.correct_antenna_delay(id2, delays[id2])
+
+    meas_new = calib_obj.compute_range_meas(pair)
 
     #%%
-    fig, ax = plt.subplots()
-    ax.set_title("Measurements " + str(initiator_id) + "->" + str(target_id))
-    ax.set_xlabel("Measurement Number")
-    ax.set_ylabel("Range [m]")
-    ax.set_ylim(0, 4)
-    plt.plot(meas_old, linewidth=1, label="Raw")
-    plt.plot(meas_new, linewidth=1, label="Calibrated")
-    plt.plot(x.data[str(initiator_id) + "->" + str(target_id)]["gt"], linewidth=3, label="GT")
-    ax.legend()
+    fig, axs = plt.subplots(2)
+
+    axs[0].set_title("Measurements for pair " + str(pair))
+    axs[0].set_xlabel("Measurement Number")
+    axs[0].set_ylabel("Range [m]")
+    axs[0].set_ylim(0, 4)
+    axs[0].plot(calib_obj.time_intervals[0][pair]["r_gt"], linewidth=3, label="GT")
+    axs[0].plot(meas_old, linewidth=1, label="Raw")
+    axs[0].plot(meas_new, linewidth=1, label="Calibrated")
+    axs[0].legend()
+
+    axs[1].set_title("Error for pair " + str(pair))
+    axs[1].set_xlabel("Measurement Number")
+    axs[1].set_ylabel("Range Error [m]")
+    axs[1].set_ylim(-0.4, 0.8)
+    axs[1].plot(meas_old - calib_obj.time_intervals[0][pair]["r_gt"], linewidth=1, label="Raw")
+    axs[1].plot(meas_new - calib_obj.time_intervals[0][pair]["r_gt"], linewidth=1, label="Calibrated")
+    axs[1].legend()
+
     plt.show()
 
     # %%
