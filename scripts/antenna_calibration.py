@@ -12,10 +12,10 @@ raw_obj = PostProcess(folder_prefix="datasets/2022_05_02/",
 
 # %%
 kf = False
-GP = True
+power_calib = True
 antenna_delay = False
-initiator_id = 1
-target_id = 3
+initiator_id = 4
+target_id = 1
 pair = (initiator_id, target_id)
 # raw_obj.visualize_raw_data(pair=(initiator_id,target_id))
 
@@ -47,11 +47,12 @@ if kf:
     ax.legend()
     plt.show()
 
-if GP:
-    calib_obj.fit_gp(pair)
+# %%
+if power_calib:
+    calib_obj.fit_model(pair, 50)
 
 # %%
-if antenna_delay:
+if antenna_delay: # TODO: Set this up based on Python's robust least squares package
     # Calibrate the antenna delays
     delays = calib_obj.calibrate_antennas()
     print(delays)

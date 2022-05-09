@@ -1,8 +1,7 @@
 import numpy as np
 from numpy.linalg import inv
 import matplotlib.pyplot as plt
-from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import RBF, WhiteKernel, Matern, DotProduct
+from scipy.interpolate import UnivariateSpline
 
 class UwbCalibrate(object):
     """
@@ -310,11 +309,7 @@ class UwbCalibrate(object):
         strides = a.strides + (a.strides[-1],)
         return np.lib.stride_tricks.as_strided(a, shape=shape, strides=strides)
 
-    def fit_gp(self, pair): # TODO: DO I REALLY NEED TO DO A GP? COULD DO SOMETHING SIMPLER
-        kernel = 1 * RBF(length_scale=1)
-        # kernel = DotProduct() * WhiteKernel()
-        # kernel = Matern(nu=2.5)
-
+    def fit_model(self, pair, std_window=50):
         alpha = -82 # TODO: Copy this over from PostProcess
         lift = lambda x: 10**((x - alpha) /10)
 
@@ -323,43 +318,39 @@ class UwbCalibrate(object):
         r_gt_unsorted = self.time_intervals[0][pair]["r_gt"]
 
         ## TODO: REMOVE THIS ONCE PROPER OUTLIER DETECTION IS IMPLEMENTED
-        thresh = 0.6
+        thresh = 0.75
         keep_idx = np.logical_and(bias < thresh, lifted_pr < 1.5)
         bias = bias[keep_idx]
         lifted_pr = lifted_pr[keep_idx]
         r_gt_unsorted = r_gt_unsorted[keep_idx]
-        bias = bias[350:-200]
-        lifted_pr = lifted_pr[350:-200]
-        r_gt_unsorted = r_gt_unsorted[350:-200]
-
-        gpr = GaussianProcessRegressor(kernel=kernel, alpha = 0.15**2, n_restarts_optimizer=1,
-                                       random_state=0).fit(lifted_pr.reshape(-1,1), bias.reshape(-1,1))
-
-        print(gpr.score(lifted_pr.reshape(-1,1), bias.reshape(-1,1)))
+        bias = bias[200:-200]
+        lifted_pr = lifted_pr[200:-200]
+        r_gt_unsorted = r_gt_unsorted[200:-200]        
 
         # rolling var along last axis
         sort_pr = np.argsort(lifted_pr)
         bias = bias[sort_pr]
         lifted_pr = lifted_pr[sort_pr]
         r_gt = r_gt_unsorted[sort_pr]
-        bias_std = np.std(self._rolling_window(bias.ravel(), 50), axis=-1)
-        bias_std = np.mean(self._rolling_window(bias_std.ravel(), 175), axis=-1)
 
-        ## Visualize GP fit
-        mean_prediction, std_prediction = gpr.predict(lifted_pr.reshape(-1,1), return_std=True)
+        bias_std = np.std(self._rolling_window(bias.ravel(), std_window), axis=-1)
+        std_spl = UnivariateSpline(lifted_pr, bias_std, k=5)
+        bias_std = std_spl(lifted_pr)
 
-        print(std_prediction)
+        # Fit spline
+        spl = UnivariateSpline(lifted_pr, bias)
+        bias_fit = spl(lifted_pr)
 
         # PLOTTING
         fig, axs = plt.subplots(3,1)
 
         axs[0].scatter(lifted_pr, bias, label=r"Raw data", linestyle="dotted", s=1)
         # axs[0].scatter(X_train, y_train, label="Observations")
-        axs[0].plot(lifted_pr, mean_prediction, label="Fit")
+        axs[0].plot(lifted_pr, bias_fit, label="Fit")
         axs[0].fill_between(
             lifted_pr.ravel(),
-            mean_prediction.ravel() - 1.96 * bias_std,
-            mean_prediction.ravel() + 1.96 * bias_std,
+            bias_fit - 1.96 * bias_std,
+            bias_fit + 1.96 * bias_std,
             alpha=0.5,
             label=r"95% confidence interval",
         )

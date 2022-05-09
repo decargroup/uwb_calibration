@@ -53,9 +53,9 @@ class PostProcess(object):
     def _detect_setup(self):
         # Only read first file
         filename = self._folder_prefix+"ros_bags/"+self._file_prefix+str(1)+".bag" 
-        bag_data = bagreader(filename)
+        self.bag_data = bagreader(filename)
 
-        topics = bag_data.topics
+        topics = self.bag_data.topics
         
         # Generate a list of devices
         all_devices = []
@@ -68,7 +68,7 @@ class PostProcess(object):
         self.device_tags = {device:[] for device in all_devices}
         for device in all_devices:
             topic = device + 'uwb/range'
-            data = bag_data.message_by_topic(topic)
+            data = self.bag_data.message_by_topic(topic)
             data_pd = pd.read_csv(data)
 
             id = data_pd['from_id']
@@ -76,7 +76,7 @@ class PostProcess(object):
 
     def _extract_gt_data(self, recording_number):
         filename = self._folder_prefix+"ros_bags/"+self._file_prefix+str(recording_number)+".bag"
-        bag_data = bagreader(filename)
+        bag_data = self.bag_data
 
         t_sec = {lv0:np.empty(0) for lv0 in self.tag_ids}
         t = {lv0:np.empty(0) for lv0 in self.tag_ids}
@@ -105,7 +105,7 @@ class PostProcess(object):
 
     def _extract_ts_data(self,recording_number):
         filename = self._folder_prefix+"ros_bags/"+self._file_prefix+str(recording_number)+".bag"
-        bag_data = bagreader(filename)
+        bag_data = self.bag_data
 
         ts_data = {}
 
