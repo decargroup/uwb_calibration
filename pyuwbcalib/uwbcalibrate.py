@@ -307,67 +307,77 @@ class UwbCalibrate(object):
         strides = a.strides + (a.strides[-1],)
         return np.lib.stride_tricks.as_strided(a, shape=shape, strides=strides)
 
-    def fit_model(self, pair, std_window=50):
-        alpha = -82 # TODO: Copy this over from PostProcess
-        lift = lambda x: 10**((x - alpha) /10)
+    @staticmethod
+    def lift(x, alpha=-82):
+        return 10**((x - alpha) /10)
 
-        bias = self.ts_data[0][pair][:,self.range_idx] - self.time_intervals[0][pair]["r_gt"]
-        lifted_pr = lift(self.ts_data[0][pair][:,self.Pr1_idx])
-        r_gt_unsorted = self.time_intervals[0][pair]["r_gt"]
+    def fit_model(self, std_window=50):
+        num_pairs = len(self.ts_data[0])
+        fig, axs = plt.subplots(3,num_pairs)
+        fig2, axs2 = plt.subplots(1) 
 
-        ## TODO: REMOVE THIS ONCE PROPER OUTLIER DETECTION IS IMPLEMENTED
-        thresh = 10
-        keep_idx = np.logical_and(bias < thresh, lifted_pr < 1.5)
-        bias = bias[keep_idx]
-        lifted_pr = lifted_pr[keep_idx]
-        r_gt_unsorted = r_gt_unsorted[keep_idx]
-        bias = bias[200:-200]
-        lifted_pr = lifted_pr[200:-200]
-        r_gt_unsorted = r_gt_unsorted[200:-200]        
+        self.mean_spline = {pair:[] for pair in self.ts_data[0]}
 
-        # rolling var along last axis
-        sort_pr = np.argsort(lifted_pr)
-        bias = bias[sort_pr]
-        lifted_pr = lifted_pr[sort_pr]
-        r_gt = r_gt_unsorted[sort_pr]
+        for lv0, pair in enumerate(self.ts_data[0]):
+            range = self.compute_range_meas(pair)
+            bias = range - self.time_intervals[0][pair]["r_gt"]
+            lifted_pr = self.lift(0.5*self.ts_data[0][pair][:,self.Pr1_idx] \
+                                  + 0.5*self.ts_data[0][pair][:,self.Pr2_idx])
+            r_gt_unsorted = self.time_intervals[0][pair]["r_gt"]
 
-        bias_std = np.std(self._rolling_window(bias.ravel(), std_window), axis=-1)
-        std_spl = UnivariateSpline(lifted_pr, bias_std, k=5)
-        bias_std = std_spl(lifted_pr)
+            ## TODO: REMOVE THIS ONCE PROPER OUTLIER DETECTION IS IMPLEMENTED
+            thresh = 0.4
+            keep_idx = np.logical_and(bias < thresh, lifted_pr < 1.8)
+            bias = bias[keep_idx]
+            lifted_pr = lifted_pr[keep_idx]
+            r_gt_unsorted = r_gt_unsorted[keep_idx]
+            bias = bias[200:-200]
+            lifted_pr = lifted_pr[200:-200]
+            r_gt_unsorted = r_gt_unsorted[200:-200]        
 
-        # Fit spline
-        spl = UnivariateSpline(lifted_pr, bias)
-        bias_fit = spl(lifted_pr)
+            # rolling var along last axis
+            sort_pr = np.argsort(lifted_pr)
+            bias = bias[sort_pr]
+            lifted_pr = lifted_pr[sort_pr]
+            r_gt = r_gt_unsorted[sort_pr]
 
-        # PLOTTING
-        fig, axs = plt.subplots(3,1)
+            bias_std = np.std(self._rolling_window(bias.ravel(), std_window), axis=-1)
+            std_spl = UnivariateSpline(lifted_pr, bias_std, k=5)
+            bias_std = std_spl(lifted_pr)
 
-        axs[0].scatter(lifted_pr, bias, label=r"Raw data", linestyle="dotted", s=1)
-        # axs[0].scatter(X_train, y_train, label="Observations")
-        axs[0].plot(lifted_pr, bias_fit, label="Fit")
-        axs[0].fill_between(
-            lifted_pr.ravel(),
-            bias_fit - 1.96 * bias_std,
-            bias_fit + 1.96 * bias_std,
-            alpha=0.5,
-            label=r"95% confidence interval",
-        )
-        axs[0].legend()
-        axs[0].set_xlabel("$f(P_r)$")
-        axs[0].set_ylabel("Bias [m]")
-        # _ = axs[0].title("Gaussian process regression on noise-free dataset")
+            # Fit spline
+            spl = UnivariateSpline(lifted_pr, bias)
+            self.mean_spline[pair] = spl
+            bias_fit = spl(lifted_pr)
 
-        ## Visualize std vs. Power
-        axs[1].plot(lifted_pr, bias_std)
-        axs[1].set_xlabel("$f(P_r)$")
-        axs[1].set_ylabel("Bias std [m]")
+            # PLOTTING
+            axs[0,lv0].scatter(lifted_pr, bias, label=r"Raw data", linestyle="dotted", s=1)
+            # axs[0,lv0].scatter(X_train, y_train, label="Observations")
+            axs[0,lv0].plot(lifted_pr, bias_fit, label="Fit")
+            axs[0,lv0].fill_between(
+                lifted_pr.ravel(),
+                bias_fit - 1.96 * bias_std,
+                bias_fit + 1.96 * bias_std,
+                alpha=0.5,
+                label=r"95% confidence interval",
+            )
+            axs[0,lv0].legend()
+            axs[0,lv0].set_xlabel("$f(P_r)$")
+            axs[0,lv0].set_ylabel("Bias [m]")
+            # _ = axs[0,lv0].title("Gaussian process regression on noise-free dataset")
 
-        ## Visualize std vs. distance
-        axs[2].scatter(r_gt, bias_std, s=1)
-        axs[2].set_xlabel("Ground truth distance [m]")
-        axs[2].set_ylabel("Bias std [m]")
+            ## Visualize std vs. Power
+            axs[1,lv0].plot(lifted_pr, bias_std)
+            axs[1,lv0].set_xlabel("$f(P_r)$")
+            axs[1,lv0].set_ylabel("Bias std [m]")
 
-        plt.show()
+            ## Visualize std vs. distance
+            axs[2,lv0].scatter(r_gt, bias_std, s=1)
+            axs[2,lv0].set_xlabel("Ground truth distance [m]")
+            axs[2,lv0].set_ylabel("Bias std [m]")
+
+            ## Separate plot with all splines
+            axs2.plot(lifted_pr, bias_fit)
 
     def calibrate_antennas(self):
         """
@@ -426,6 +436,7 @@ class UwbCalibrate(object):
         TODO: What about D1 and D2? This seems to be a problem.
               We might have to calibrate for TX and RX delays separately
               if we are to proceed with Kalman filtering with this architecture.
+        TODO: tof1, tof2, and tof3 as well.
         """
         for key in self.time_intervals[0]:
             if key[0] == id:
@@ -440,7 +451,7 @@ class UwbCalibrate(object):
             range = 1/2 * self._c / 1e9 \
                     * (abs(interv["tof1"]) \
                        + abs(interv["tof2"]) \
-                       + 0*abs(interv["tof3"]))
+                       + 0*abs(interv["tof3"])) # TODO: why *0? Antenna delay?
         elif owr:
             range = 1/2 * self._c / 1e9 \
                     * (abs(interv["tof1"]) \

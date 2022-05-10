@@ -381,7 +381,7 @@ class PostProcess(object):
 
         axs.legend()
 
-    def visualize_raw_data(self, pair=(1,2)):
+    def visualize_raw_data(self, pair=(1,2), alpha=-82):
         all_interv = self._stitch_time_intervals(pair)
         all_Pr = self._stitch_power(pair)
         bias = self._stitch_bias(pair)
