@@ -38,7 +38,6 @@ class UwbCalibrate(object):
         """
         # Retrieve attributes from processed_data
         # TODO: there must be a better way to do this without confusing intelliSense
-        self.num_of_recordings = processed_data.num_of_recordings
         self.tag_ids = processed_data.tag_ids
         self.mult_twr = processed_data.mult_twr
         self.num_meas = processed_data.num_meas
@@ -48,8 +47,8 @@ class UwbCalibrate(object):
         if rm_static:
             self.ts_data = {}
             self.time_intervals = {}
-            self.ts_data[0], self.time_intervals[0] \
-                = self._remove_static_regions(processed_data.ts_data[0], processed_data.time_intervals[0])
+            self.ts_data, self.time_intervals \
+                = self._remove_static_regions(processed_data.ts_data, processed_data.time_intervals)
         else:
             self.ts_data = processed_data.ts_data
             self.time_intervals = processed_data.time_intervals
@@ -185,8 +184,8 @@ class UwbCalibrate(object):
         target_id = self.tag_ids[target_idx]
         pair = (initiating_id, target_id)
 
-        Ra2 = self.time_intervals[0][pair]["Ra2"]
-        Db2 = self.time_intervals[0][pair]["Db2"]
+        Ra2 = self.time_intervals[pair]["Ra2"]
+        Db2 = self.time_intervals[pair]["Db2"]
 
         if self.mult_twr:
             return Ra2 / Db2
@@ -238,9 +237,9 @@ class UwbCalibrate(object):
         target_id = self.tag_ids[target_idx]
         pair = (initiating_id, target_id)
 
-        gt = self.time_intervals[0][pair]["r_gt"]
-        Ra1 = self.time_intervals[0][pair]["Ra1"]
-        Db1 = self.time_intervals[0][pair]["Db1"]
+        gt = self.time_intervals[pair]["r_gt"]
+        Ra1 = self.time_intervals[pair]["Ra1"]
+        Db1 = self.time_intervals[pair]["Db1"]
 
         b = 1 / self._c * gt * 1e9 - 0.5 * (Ra1) + 0.5 * K * (Db1)
 
@@ -265,43 +264,40 @@ class UwbCalibrate(object):
 
     def filter_data(self, Q, R, visualize=False):
         if visualize:
-            num_of_pairs = len(self.time_intervals[0])
-            fig, axs = plt.subplots(self.num_of_recordings, num_of_pairs)
-            axs = axs.reshape(self.num_of_recordings, num_of_pairs)
+            num_of_pairs = len(self.time_intervals)
+            fig, axs = plt.subplots(num_of_pairs)
 
-        for lv0, recording in enumerate(self.time_intervals):
-            for lv1, pair in enumerate(self.time_intervals[recording]):
-                x_hist, P_hist = self._clock_filter(recording, pair, Q, R)
-                
-                self._update_tof_intervals(recording, pair, x_hist[0,:])
+        for lv0, pair in enumerate(self.time_intervals):
+            x_hist, P_hist = self._clock_filter(pair, Q, R)
+            
+            self._update_tof_intervals(pair, x_hist[0,:])
 
-                if visualize: 
-                    Ra2 = self.time_intervals[recording][pair]["Ra2"]
-                    Db2 = self.time_intervals[recording][pair]["Db2"]
-                    S1 = self.time_intervals[recording][pair]["S1"]
-                    S2 = self.time_intervals[recording][pair]["S2"]
-                    Db1 = self.time_intervals[recording][pair]["Db1"]
-                    y1 = 0.5*(S1 - S2)
-                    y2 = Db2 - Ra2
-                    y_tau = - y1 - 0.5*(Db1/(Db2-Db1))*y2
-                    # axs[lv0,lv1].plot(-y_tau)
+            if visualize: 
+                Ra2 = self.time_intervals[pair]["Ra2"]
+                Db2 = self.time_intervals[pair]["Db2"]
+                S1 = self.time_intervals[pair]["S1"]
+                S2 = self.time_intervals[pair]["S2"]
+                Db1 = self.time_intervals[pair]["Db1"]
+                y1 = 0.5*(S1 - S2)
+                y2 = Db2 - Ra2
+                y_tau = - y1 - 0.5*(Db1/(Db2-Db1))*y2
 
-                    self._plot_kf(x_hist, P_hist, axs[lv0,lv1], y_tau)
+                self._plot_kf(x_hist, P_hist, axs[lv0], y_tau)
 
         if visualize:
             plt.show()
 
-    def _update_tof_intervals(self, recording, pair, tau):
+    def _update_tof_intervals(self, pair, tau):
         # TODO: Take uncertainty into consideration?
-        self.time_intervals[recording][pair]["tof1"] \
-            = self.time_intervals[recording][pair]["tof1"] - tau
+        self.time_intervals[pair]["tof1"] \
+            = self.time_intervals[pair]["tof1"] - tau
 
-        self.time_intervals[recording][pair]["tof2"] \
-            = self.time_intervals[recording][pair]["tof2"] + tau
+        self.time_intervals[pair]["tof2"] \
+            = self.time_intervals[pair]["tof2"] + tau
 
         if self.mult_twr:
-            self.time_intervals[recording][pair]["tof3"] \
-                = self.time_intervals[recording][pair]["tof3"] + tau
+            self.time_intervals[pair]["tof3"] \
+                = self.time_intervals[pair]["tof3"] + tau
 
     @staticmethod
     def _plot_kf(x, P, axs, y_tau):
@@ -309,19 +305,19 @@ class UwbCalibrate(object):
 
         axs.ticklabel_format(style='plain')
         
-        # P_iter = P[1,1,:]
-        # P_iter = P_iter.reshape(-1,)
-        # axs.plot(x[0,:] + 3*np.sqrt(P_iter))
-        # axs.plot(x[0,:] - 3*np.sqrt(P_iter))
+        P_iter = P[1,1,:]
+        P_iter = P_iter.reshape(-1,)
+        axs.plot(x[0,:] + 3*np.sqrt(P_iter))
+        axs.plot(x[0,:] - 3*np.sqrt(P_iter))
 
-    def _clock_filter(self, recording, pair, Q, R):
+    def _clock_filter(self, pair, Q, R):
         # Intervals
-        dt = self.time_intervals[recording][pair]["dt"]
-        Ra2 = self.time_intervals[recording][pair]["Ra2"]
-        Db2 = self.time_intervals[recording][pair]["Db2"]
-        S1 = self.time_intervals[recording][pair]["S1"]
-        S2 = self.time_intervals[recording][pair]["S2"]
-        Db1 = self.time_intervals[recording][pair]["Db1"]
+        dt = self.time_intervals[pair]["dt"]
+        Ra2 = self.time_intervals[pair]["Ra2"]
+        Db2 = self.time_intervals[pair]["Db2"]
+        S1 = self.time_intervals[pair]["S1"]
+        S2 = self.time_intervals[pair]["S2"]
+        Db1 = self.time_intervals[pair]["Db1"]
 
         # Storage variables
         n = dt.size
@@ -444,18 +440,18 @@ class UwbCalibrate(object):
         return spl, std_spl, bias, lifted_pr
 
     def fit_model(self, std_window=50, chi_thresh=10.8):
-        num_pairs = len(self.ts_data[0])
+        num_pairs = len(self.ts_data)
         fig, axs = plt.subplots(3,num_pairs)
         fig2, axs2 = plt.subplots(1) 
 
-        self.mean_spline = {pair:[] for pair in self.ts_data[0]}
+        self.mean_spline = {pair:[] for pair in self.ts_data}
 
-        for lv0, pair in enumerate(self.ts_data[0]):
+        for lv0, pair in enumerate(self.ts_data):
             range = self.compute_range_meas(pair)
-            bias = range - self.time_intervals[0][pair]["r_gt"]
-            lifted_pr = self.lift(0.5*self.ts_data[0][pair][:,self.Pr1_idx] \
-                                  + 0.5*self.ts_data[0][pair][:,self.Pr2_idx])
-            r_gt_unsorted = self.time_intervals[0][pair]["r_gt"]
+            bias = range - self.time_intervals[pair]["r_gt"]
+            lifted_pr = self.lift(0.5*self.ts_data[pair][:,self.Pr1_idx] \
+                                  + 0.5*self.ts_data[pair][:,self.Pr2_idx])
+            r_gt_unsorted = self.time_intervals[pair]["r_gt"]
 
             ## TODO: REMOVE THIS ONCE PROPER OUTLIER DETECTION IS IMPLEMENTED
             pr_thresh = 2
@@ -562,15 +558,15 @@ class UwbCalibrate(object):
               if we are to proceed with Kalman filtering with this architecture.
         TODO: tof1, tof2, and tof3 as well.
         """
-        for key in self.time_intervals[0]:
+        for key in self.time_intervals:
             if key[0] == id:
-                self.time_intervals[0][key]["Ra1"] += delay
+                self.time_intervals[key]["Ra1"] += delay
             elif key[1] == id:
-                self.time_intervals[0][key]["Db1"] -= delay
+                self.time_intervals[key]["Db1"] -= delay
 
     def compute_range_meas(self, pair=(1,2), visualize=False, owr = False):
         #TODO: Inherit this function from PostProcess?
-        interv = self.time_intervals[0][pair]
+        interv = self.time_intervals[pair]
         if owr and self.mult_twr:
             range = 1/2 * self._c / 1e9 \
                     * (abs(interv["tof1"]) \

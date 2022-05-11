@@ -13,10 +13,11 @@ sns.set_theme()
 tag_ids=[4,1,3] # in the order of tripod1, tripod2, tripod3
 raw_obj = PostProcess(folder_prefix="datasets/2022_05_02/",
                       file_prefix="test",
-                      num_of_recordings=1,
                       num_meas=-1,
                       tag_ids=tag_ids)
 
+
+plt.show(block=True)
 
 # %%
 kf = False
@@ -32,9 +33,9 @@ pair = (initiator_id, target_id)
 calib_obj = UwbCalibrate(raw_obj, rm_static=True)
 
 ## Pre-calibration
-num_pairs = len(calib_obj.ts_data[0])
-meas_old = {pair:[] for pair in calib_obj.ts_data[0]}
-for lv0, pair in enumerate(calib_obj.ts_data[0]):
+num_pairs = len(calib_obj.ts_data)
+meas_old = {pair:[] for pair in calib_obj.ts_data}
+for lv0, pair in enumerate(calib_obj.ts_data):
     meas_old[pair] = calib_obj.compute_range_meas(pair,
                                                   visualize=True)
 
@@ -54,10 +55,10 @@ if kf:
     # ax.set_xlabel("Measurement Number")
     # ax.set_ylabel("Range [m]")
     # ax.set_ylim(0, 4)
-    t = calib_obj.time_intervals[0][pair]['t']
+    t = calib_obj.time_intervals[pair]['t']
     plt.plot(t, meas_old, linewidth=1, label="Raw")
     plt.plot(t, meas_filtered, linewidth=1, label="Calibrated")
-    plt.plot(t, calib_obj.time_intervals[0][pair]['r_gt'])
+    plt.plot(t, calib_obj.time_intervals[pair]['r_gt'])
     ax.legend()
     plt.show(block=True)
 
@@ -84,7 +85,7 @@ if antenna_delay:
     axs[0].set_xlabel("Measurement Number")
     axs[0].set_ylabel("Range [m]")
     axs[0].set_ylim(0, 4)
-    axs[0].plot(calib_obj.time_intervals[0][pair]["r_gt"], linewidth=3, label="GT")
+    axs[0].plot(calib_obj.time_intervals[pair]["r_gt"], linewidth=3, label="GT")
     axs[0].plot(meas_old[pair], linewidth=1, label="Raw")
     axs[0].plot(meas_new, linewidth=1, label="Calibrated")
     axs[0].legend()
@@ -93,8 +94,8 @@ if antenna_delay:
     axs[1].set_xlabel("Measurement Number")
     axs[1].set_ylabel("Range Error [m]")
     axs[1].set_ylim(-0.4, 0.8)
-    axs[1].plot(meas_old[pair] - calib_obj.time_intervals[0][pair]["r_gt"], linewidth=1, label="Raw")
-    axs[1].plot(meas_new - calib_obj.time_intervals[0][pair]["r_gt"], linewidth=1, label="Calibrated")
+    axs[1].plot(meas_old[pair] - calib_obj.time_intervals[pair]["r_gt"], linewidth=1, label="Raw")
+    axs[1].plot(meas_new - calib_obj.time_intervals[pair]["r_gt"], linewidth=1, label="Calibrated")
     axs[1].legend()
 
     # %%
@@ -104,18 +105,18 @@ if power_calib:
     calib_obj.fit_model(std_window=250, chi_thresh=10.8*1.25)
 
 # %% Final plotting
-num_pairs = len(calib_obj.ts_data[0])
+num_pairs = len(calib_obj.ts_data)
 fig, axs = plt.subplots(num_pairs)
-for lv0, pair in enumerate(calib_obj.ts_data[0]):
+for lv0, pair in enumerate(calib_obj.ts_data):
     meas = calib_obj.compute_range_meas(pair)
-    gt = calib_obj.time_intervals[0][pair]["r_gt"]
+    gt = calib_obj.time_intervals[pair]["r_gt"]
 
     # TODO: full bias calibration inside compute_range_meas
     spl = calib_obj.mean_spline[pair]
     Pr1_idx = calib_obj.Pr1_idx
     Pr2_idx = calib_obj.Pr2_idx
-    lifted_Pr1 = calib_obj.lift(calib_obj.ts_data[0][pair][:,Pr1_idx])
-    lifted_Pr2 = calib_obj.lift(calib_obj.ts_data[0][pair][:,Pr2_idx])
+    lifted_Pr1 = calib_obj.lift(calib_obj.ts_data[pair][:,Pr1_idx])
+    lifted_Pr2 = calib_obj.lift(calib_obj.ts_data[pair][:,Pr2_idx])
     pr_bias = spl(0.5 * (lifted_Pr1 + lifted_Pr2))
     meas_calibrated = meas - pr_bias
 

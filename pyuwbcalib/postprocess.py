@@ -13,31 +13,29 @@ class PostProcess(object):
     PARAMETERS:
     -----------
     TODO 1: Check for missing rigid bodies when checking bag files.
-         2: Remove support for loading multiple bag files. No longer necessary.
          3: Add tests.
     """
 
     _c = 299702547 # speed of light
     _to_ns = 1e9 * (1.0 / 499.2e6 / 128.0) # DW time unit to nanoseconds
-    def __init__(self, folder_prefix='datasets', file_prefix='recording', num_of_recordings=1,
+    def __init__(self, folder_prefix='datasets', file_prefix='recording',
                  tag_ids=[1,2,3], mult_twr=1, num_meas=-1):
         """
         Constructor
         """
         self._folder_prefix = folder_prefix
         self._file_prefix = file_prefix
-        self.num_of_recordings = num_of_recordings
         self.tag_ids = tag_ids
         self.mult_twr = mult_twr
         self.num_meas = num_meas
 
         self.num_of_tags = len(tag_ids)
 
-        self.r = {i:[] for i in range(num_of_recordings)}
-        self.phi = {i:{} for i in range(num_of_recordings)}
-        self._gt_distance = {i:[] for i in range(num_of_recordings)}
-        self.ts_data = {i:{} for i in range(num_of_recordings)}
-        self.time_intervals = {i:{} for i in range(num_of_recordings)}
+        self.r = []
+        self.phi = {}
+        self._gt_distance = []
+        self.ts_data = {}
+        self.time_intervals = {}
 
         self._preprocess_data()
 
@@ -73,17 +71,14 @@ class PostProcess(object):
             id = data_pd['from_id']
             self.device_tags[device] = list(set(id))
 
-    def _extract_gt_data(self, recording_number):
-        filename = self._folder_prefix+"ros_bags/"+self._file_prefix+str(recording_number)+".bag"
-        bag_data = self.bag_data
-
+    def _extract_gt_data(self):
         t_sec = {lv0:np.empty(0) for lv0 in self.tag_ids}
         t = {lv0:np.empty(0) for lv0 in self.tag_ids}
         r = {lv0:np.empty(0) for lv0 in self.tag_ids}
         C = {lv0:[] for lv0 in self.tag_ids}
         for lv0 in range(len(self.tag_ids)): # TODO: Get the rigid bodies automatically
             topic = '/vrpn_client_node/tripod' + str(lv0+1) + '/pose'
-            data = bag_data.message_by_topic(topic)
+            data = self.bag_data.message_by_topic(topic)
             data_pd = pd.read_csv(data)
 
             id = self.tag_ids[lv0]
@@ -102,15 +97,12 @@ class PostProcess(object):
 
         return t_sec, t, r, C
 
-    def _extract_ts_data(self,recording_number):
-        filename = self._folder_prefix+"ros_bags/"+self._file_prefix+str(recording_number)+".bag"
-        bag_data = self.bag_data
-
+    def _extract_ts_data(self):
         ts_data = {}
 
         for device in self.device_tags:
             topic = device + 'uwb/range'
-            data = bag_data.message_by_topic(topic)
+            data = self.bag_data.message_by_topic(topic)
             data_pd = pd.read_csv(data)
 
             for idx, row in data_pd.iterrows():
@@ -148,8 +140,8 @@ class PostProcess(object):
 
         return ts_data
 
-    def _retrieve_time_intervals(self, recording, pair):
-        ts = self.ts_data[recording][pair]
+    def _retrieve_time_intervals(self, pair):
+        ts = self.ts_data[pair]
 
         intervals = {}
 
@@ -174,42 +166,41 @@ class PostProcess(object):
         max_time_ns = 2**32 * self._to_ns
 
         # ------- Unwrap time-stamps --------
-        for recording in range(self.num_of_recordings):
-            for pair in self.ts_data[recording]: 
-                # Check if a clock wrap occured at the first measurement, and unwrap
-                if self.ts_data[recording][pair][:,self.rx2_idx][0] < self.ts_data[recording][pair][:,self.tx1_idx][0]:
-                    self.ts_data[recording][pair][:,self.rx2_idx][0] + max_time_ns
+        for pair in self.ts_data: 
+            # Check if a clock wrap occured at the first measurement, and unwrap
+            if self.ts_data[pair][:,self.rx2_idx][0] < self.ts_data[pair][:,self.tx1_idx][0]:
+                self.ts_data[pair][:,self.rx2_idx][0] + max_time_ns
 
-                if self.ts_data[recording][pair][:,self.tx2_idx][0] < self.ts_data[recording][pair][:,self.rx1_idx][0]:
-                    self.ts_data[recording][pair][:,self.tx2_idx][0] + max_time_ns
+            if self.ts_data[pair][:,self.tx2_idx][0] < self.ts_data[pair][:,self.rx1_idx][0]:
+                self.ts_data[pair][:,self.tx2_idx][0] + max_time_ns
 
-                if self.ts_data[recording][pair][:,self.tx3_idx][0] < self.ts_data[recording][pair][:,self.tx2_idx][0]:
-                    self.ts_data[recording][pair][:,self.tx3_idx][0] + max_time_ns
+            if self.ts_data[pair][:,self.tx3_idx][0] < self.ts_data[pair][:,self.tx2_idx][0]:
+                self.ts_data[pair][:,self.tx3_idx][0] + max_time_ns
 
-                if self.ts_data[recording][pair][:,self.rx3_idx][0] < self.ts_data[recording][pair][:,self.rx2_idx][0]:
-                    self.ts_data[recording][pair][:,self.rx3_idx][0] + max_time_ns
+            if self.ts_data[pair][:,self.rx3_idx][0] < self.ts_data[pair][:,self.rx2_idx][0]:
+                self.ts_data[pair][:,self.rx3_idx][0] + max_time_ns
 
-                # Individual unwraps
-                self.ts_data[recording][pair][:,0] \
-                    = self._unwrap(self.ts_data[recording][pair][:,0], 1e9)
-                
-                self.ts_data[recording][pair][:,self.tx1_idx] \
-                    = self._unwrap(self.ts_data[recording][pair][:,self.tx1_idx], max_time_ns)
+            # Individual unwraps
+            self.ts_data[pair][:,0] \
+                = self._unwrap(self.ts_data[pair][:,0], 1e9)
+            
+            self.ts_data[pair][:,self.tx1_idx] \
+                = self._unwrap(self.ts_data[pair][:,self.tx1_idx], max_time_ns)
 
-                self.ts_data[recording][pair][:,self.rx1_idx] \
-                    = self._unwrap(self.ts_data[recording][pair][:,self.rx1_idx], max_time_ns)
+            self.ts_data[pair][:,self.rx1_idx] \
+                = self._unwrap(self.ts_data[pair][:,self.rx1_idx], max_time_ns)
 
-                self.ts_data[recording][pair][:,self.tx2_idx] \
-                    = self._unwrap(self.ts_data[recording][pair][:,self.tx2_idx], max_time_ns)
+            self.ts_data[pair][:,self.tx2_idx] \
+                = self._unwrap(self.ts_data[pair][:,self.tx2_idx], max_time_ns)
 
-                self.ts_data[recording][pair][:,self.rx2_idx] \
-                    = self._unwrap(self.ts_data[recording][pair][:,self.rx2_idx], max_time_ns)
+            self.ts_data[pair][:,self.rx2_idx] \
+                = self._unwrap(self.ts_data[pair][:,self.rx2_idx], max_time_ns)
 
-                self.ts_data[recording][pair][:,self.tx3_idx] \
-                    = self._unwrap(self.ts_data[recording][pair][:,self.tx3_idx], max_time_ns)
+            self.ts_data[pair][:,self.tx3_idx] \
+                = self._unwrap(self.ts_data[pair][:,self.tx3_idx], max_time_ns)
 
-                self.ts_data[recording][pair][:,self.rx3_idx] \
-                    = self._unwrap(self.ts_data[recording][pair][:,self.rx3_idx], max_time_ns)
+            self.ts_data[pair][:,self.rx3_idx] \
+                = self._unwrap(self.ts_data[pair][:,self.rx3_idx], max_time_ns)
 
     @staticmethod
     def _unwrap(data, max):
@@ -247,31 +238,29 @@ class PostProcess(object):
         return f(t_new)
 
     def _interpolate_gt_to_uwb(self):
-        for recording in self.time_intervals:
-            for pair in self.time_intervals[recording]:
-                t_new = self.time_intervals[recording][pair]["t"]
-                try:
-                    r = self._gt_distance[recording][pair]["dist"]
-                    t_old = self._gt_distance[recording][pair]["t"]
-                except:
-                    r = self._gt_distance[recording][pair[::-1]]["dist"]
-                    t_old = self._gt_distance[recording][pair[::-1]]["t"]
-                
-                f = interp1d(t_old, r, kind='linear', fill_value='extrapolate')
+        for pair in self.time_intervals:
+            t_new = self.time_intervals[pair]["t"]
+            try:
+                r = self._gt_distance[pair]["dist"]
+                t_old = self._gt_distance[pair]["t"]
+            except:
+                r = self._gt_distance[pair[::-1]]["dist"]
+                t_old = self._gt_distance[pair[::-1]]["t"]
+            
+            f = interp1d(t_old, r, kind='linear', fill_value='extrapolate')
 
-                self.time_intervals[recording][pair].update({'r_gt': f(t_new)})
+            self.time_intervals[pair].update({'r_gt': f(t_new)})
 
 
     def _store_gt_distance(self):
-        for recording in range(self.num_of_recordings):
-            t_sec, t, r, C = self._extract_gt_data(recording+1)
-            self.r[recording] = r
+        t_sec, t, r, C = self._extract_gt_data()
+        self.r = r
 
-            for tag in C:
-                t[tag] = self._unwrap_gt(t_sec[tag], t[tag], 1e9)
-                self.phi[recording].update({tag:C[tag].as_rotvec()})
-            
-            self._gt_distance[recording] = self._calculate_gt_distance(t, r)
+        for tag in C:
+            t[tag] = self._unwrap_gt(t_sec[tag], t[tag], 1e9)
+            self.phi.update({tag:C[tag].as_rotvec()})
+        
+        self._gt_distance = self._calculate_gt_distance(t, r)
         
     @staticmethod
     def _unwrap_gt(t_sec, t, max):
@@ -284,65 +273,47 @@ class PostProcess(object):
         return t
 
     def _store_ts_data(self):
-        for recording in range(self.num_of_recordings):
-            temp_dict = self._extract_ts_data(recording+1)
-            self.ts_data[recording].update(temp_dict)
+        temp_dict = self._extract_ts_data()
+        self.ts_data.update(temp_dict)
 
     def _store_time_intervals(self):
         self._unwrap_all_clocks()
-        for recording in range(self.num_of_recordings):
-            for pair in self.ts_data[recording]: 
-                temp_dict = self._retrieve_time_intervals(recording,pair)
-                self.time_intervals[recording].update({pair:temp_dict})
+        for pair in self.ts_data: 
+            temp_dict = self._retrieve_time_intervals(pair)
+            self.time_intervals.update({pair:temp_dict})
 
     def _stitch_time_intervals(self, pair):
+        intervals_iter = self.time_intervals[pair]
         all_interv = {}
-        all_interv["t"] = np.empty(0)
-        all_interv["Ra1"] = np.empty(0)
-        all_interv["Ra2"] = np.empty(0)
-        all_interv["Db1"] = np.empty(0)
-        all_interv["Db2"] = np.empty(0)
-        all_interv["tof1"] = np.empty(0)
-        all_interv["tof2"] = np.empty(0)
-        all_interv["tof3"] = np.empty(0)
-        all_interv["S1"] = np.empty(0)
-        all_interv["S2"] = np.empty(0)
-        for recording in range(self.num_of_recordings):
-            intervals_iter = self.time_intervals[recording][pair]
-            all_interv["t"] = np.hstack((all_interv["t"], intervals_iter["t"]))
-            all_interv["Ra1"] = np.hstack((all_interv["Ra1"], intervals_iter["Ra1"]))
-            all_interv["Ra2"] = np.hstack((all_interv["Ra2"], intervals_iter["Ra2"]))
-            all_interv["Db1"] = np.hstack((all_interv["Db1"], intervals_iter["Db1"]))
-            all_interv["Db2"] = np.hstack((all_interv["Db2"], intervals_iter["Db2"]))
-            all_interv["tof1"] = np.hstack((all_interv["tof1"], intervals_iter["tof1"]))
-            all_interv["tof2"] = np.hstack((all_interv["tof2"], intervals_iter["tof2"]))
-            all_interv["tof3"] = np.hstack((all_interv["tof3"], intervals_iter["tof3"]))
-            all_interv["S1"] = np.hstack((all_interv["S1"], intervals_iter["S1"]))
-            all_interv["S2"] = np.hstack((all_interv["S2"], intervals_iter["S2"]))
+        all_interv["t"] = intervals_iter["t"]
+        all_interv["Ra1"] =  intervals_iter["Ra1"]
+        all_interv["Ra2"] =  intervals_iter["Ra2"]
+        all_interv["Db1"] =  intervals_iter["Db1"]
+        all_interv["Db2"] =  intervals_iter["Db2"]
+        all_interv["tof1"] = intervals_iter["tof1"]
+        all_interv["tof2"] = intervals_iter["tof2"]
+        all_interv["tof3"] = intervals_iter["tof3"]
+        all_interv["S1"] = intervals_iter["S1"]
+        all_interv["S2"] = intervals_iter["S2"]
 
         return all_interv
 
-    def _stitch_power(self, pair):
+    def _stitch_power(self, pair):        
+        ts_iter = self.ts_data[pair]
         all_Pr = {}
-        all_Pr["Pr1"] = np.empty(0)
-        all_Pr["Pr2"] = np.empty(0)
-        for recording in range(self.num_of_recordings):
-            ts_iter = self.ts_data[recording][pair]
-            all_Pr["Pr1"] = np.hstack((all_Pr["Pr1"], ts_iter[:,self.Pr1_idx]))
-            all_Pr["Pr2"] = np.hstack((all_Pr["Pr2"], ts_iter[:,self.Pr2_idx]))
+        all_Pr["Pr1"] = ts_iter[:,self.Pr1_idx]
+        all_Pr["Pr2"] = ts_iter[:,self.Pr2_idx]
 
         return all_Pr
 
     def _stitch_bias(self, pair):
-        bias = np.empty(0)
-        for recording in range(self.num_of_recordings):
-            ts_iter = self.ts_data[recording][pair]
-            interv_iter = self.time_intervals[recording][pair]
+        ts_iter = self.ts_data[pair]
+        interv_iter = self.time_intervals[pair]
 
-            # try:
-            bias = np.hstack((bias, ts_iter[:,self.range_idx] - interv_iter["r_gt"]))
-            # except:
-                # bias = np.hstack((bias, ts_iter[:,self.range_idx] - self.mean_gt_distance[recording][pair[::-1]]))
+        # try:
+        bias = ts_iter[:,self.range_idx] - interv_iter["r_gt"]
+        # except:
+            # bias = np.hstack((bias, ts_iter[:,self.range_idx] - self.mean_gt_distance[pair[::-1]]))
 
         return bias
 
@@ -353,8 +324,8 @@ class PostProcess(object):
         fig, axs = plt.subplots(1)
 
         axs.plot(all_interv["t"]/1e9, range, label='Range Measurements')
-        axs.scatter(self._gt_distance[0][(pair)]["t"]/1e9, 
-                    self._gt_distance[0][(pair)]["dist"], 
+        axs.scatter(self._gt_distance[pair]["t"]/1e9, 
+                    self._gt_distance[pair]["dist"], 
                     s=1,
                     label='Ground Truth')
         
@@ -371,8 +342,8 @@ class PostProcess(object):
         fig, axs = plt.subplots(1)
 
         axs.plot(all_interv["t"]/1e9, range, label='Range Measurements')
-        axs.scatter(self._gt_distance[0][(pair)]["t"]/1e9, \
-                    self._gt_distance[0][(pair)]["dist"], s=1, \
+        axs.scatter(self._gt_distance[pair]["t"]/1e9, \
+                    self._gt_distance[pair]["dist"], s=1, \
                     label='Ground Truth', color='r')
 
         axs.set_ylabel("Distance [m]")
