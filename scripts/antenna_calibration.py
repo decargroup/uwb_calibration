@@ -2,9 +2,11 @@
 from sklearn.datasets import make_hastie_10_2
 from pyuwbcalib.uwbcalibrate import UwbCalibrate
 from pyuwbcalib.postprocess import PostProcess
+import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
+matplotlib.use('Qt5Agg')
 
 sns.set_theme()
 
@@ -27,7 +29,7 @@ pair = (initiator_id, target_id)
 
 # %%
 # TODO: Surely there is a better way to do this??
-calib_obj = UwbCalibrate(raw_obj)
+calib_obj = UwbCalibrate(raw_obj, rm_static=True)
 
 ## Pre-calibration
 num_pairs = len(calib_obj.ts_data[0])
@@ -35,6 +37,8 @@ meas_old = {pair:[] for pair in calib_obj.ts_data[0]}
 for lv0, pair in enumerate(calib_obj.ts_data[0]):
     meas_old[pair] = calib_obj.compute_range_meas(pair,
                                                   visualize=False)
+
+plt.show(block=True)
 
 # %%
 if kf:
@@ -55,10 +59,11 @@ if kf:
     plt.plot(t, meas_filtered, linewidth=1, label="Calibrated")
     plt.plot(t, calib_obj.time_intervals[0][pair]['r_gt'])
     ax.legend()
-    plt.show()
+    plt.show(block=True)
 
-# %% Antenna delay
-if antenna_delay: # TODO: Set this up based on Python's robust least squares package
+# %% Antenna delay: # TODO: Should we do power calibration first to remove outliers? 
+                    # TODO: Alternatively, could do robust LS
+if antenna_delay: 
     # Calibrate the antenna delays
     delays = calib_obj.calibrate_antennas()
     print(delays)
@@ -96,7 +101,7 @@ if antenna_delay: # TODO: Set this up based on Python's robust least squares pac
 
 # %% Power calibration
 if power_calib:
-    calib_obj.fit_model(std_window=50)
+    calib_obj.fit_model(std_window=250, chi_thresh=10.8*1.25)
 
 # %% Final plotting
 num_pairs = len(calib_obj.ts_data[0])
@@ -114,13 +119,13 @@ for lv0, pair in enumerate(calib_obj.ts_data[0]):
     pr_bias = spl(0.5 * (lifted_Pr1 + lifted_Pr2))
     meas_calibrated = meas - pr_bias
 
-    axs[lv0].plot(meas[:1500]-gt[:1500], label = 'w/ Antenna Delay Calibration')
-    axs[lv0].plot(meas_calibrated[:1500]-gt[:1500], label = 'Fully Calibrated')
-    axs[lv0].plot(meas_old[pair][:1500]-gt[:1500], label = 'Raw')
+    axs[lv0].plot(meas[:1000]-gt[:1000], label = 'w/ Antenna Delay Calibration')
+    axs[lv0].plot(meas_calibrated[:1000]-gt[:1000], label = 'Fully Calibrated')
+    axs[lv0].plot(meas_old[pair][:1000]-gt[:1000], label = 'Raw')
     axs[lv0].set_ylabel("Range Error [m]")
     axs[lv0].set_xlabel("Measurement Number")
     axs[lv0].set_ylim([-0.35, 0.6])
 
 axs[0].legend()
-plt.show()
+plt.show(block=True)
 # %%

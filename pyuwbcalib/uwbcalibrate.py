@@ -32,7 +32,7 @@ class UwbCalibrate(object):
 
     _c = 299702547  # speed of light
 
-    def __init__(self, processed_data, outliers=False):
+    def __init__(self, processed_data, rm_static=True):
         """
         Constructor
         """
@@ -57,12 +57,16 @@ class UwbCalibrate(object):
         self.rx3_idx = 7
         self.Pr1_idx = 8
         self.Pr2_idx = 9
-        
-        if not outliers:
-            self._remove_outliers()
 
-    def _remove_outliers(self):
-        # TODO: implement an outlier rejection algorithm.
+        if rm_static:
+            self._remove_static_regions()
+
+    def _remove_static_regions():
+        # TBD
+        pass
+
+    def _find_static_regions():
+        # TBD
         pass
 
     def _calculate_skew_gain(self, initiating_idx, target_idx):
@@ -311,7 +315,39 @@ class UwbCalibrate(object):
     def lift(x, alpha=-82):
         return 10**((x - alpha) /10)
 
-    def fit_model(self, std_window=50):
+    def _reject_outliers(self, bias, lifted_pr, std_window, chi_thresh):
+        outlier_bias = np.empty(0,)
+        outlier_lifted_pr = np.empty(0,)
+        while True:
+            # Fit 
+            bias_std = np.std(self._rolling_window(bias.ravel(), std_window), axis=-1)
+            std_spl = UnivariateSpline(lifted_pr, bias_std, k=3)
+            bias_std = std_spl(lifted_pr)
+
+            # Fit spline
+            spl = UnivariateSpline(lifted_pr, bias)
+            bias_fit = spl(lifted_pr)
+
+            # Remove outliers
+            norm_e_squared = (bias - bias_fit)**2 / bias_std**2
+            outliers = norm_e_squared > chi_thresh
+            if np.sum(outliers):
+                outlier_bias = np.hstack((outlier_bias, bias[outliers]))
+                bias = bias[~outliers]
+
+                outlier_lifted_pr = np.hstack((outlier_lifted_pr, lifted_pr[outliers]))
+                lifted_pr = lifted_pr[~outliers] 
+            else:
+                break
+
+        fig, axs = plt.subplots(1)
+
+        axs.scatter(lifted_pr, bias)
+        axs.scatter(outlier_lifted_pr, outlier_bias)
+
+        return spl, std_spl, bias, lifted_pr
+
+    def fit_model(self, std_window=50, chi_thresh=10.8):
         num_pairs = len(self.ts_data[0])
         fig, axs = plt.subplots(3,num_pairs)
         fig2, axs2 = plt.subplots(1) 
@@ -326,14 +362,15 @@ class UwbCalibrate(object):
             r_gt_unsorted = self.time_intervals[0][pair]["r_gt"]
 
             ## TODO: REMOVE THIS ONCE PROPER OUTLIER DETECTION IS IMPLEMENTED
-            thresh = 0.4
-            keep_idx = np.logical_and(bias < thresh, lifted_pr < 1.8)
-            bias = bias[keep_idx]
-            lifted_pr = lifted_pr[keep_idx]
-            r_gt_unsorted = r_gt_unsorted[keep_idx]
-            bias = bias[200:-200]
-            lifted_pr = lifted_pr[200:-200]
-            r_gt_unsorted = r_gt_unsorted[200:-200]        
+            pr_thresh = 2
+            bias = bias[lifted_pr < pr_thresh]
+            r_gt_unsorted = r_gt_unsorted[lifted_pr < pr_thresh]
+            lifted_pr = lifted_pr[lifted_pr < pr_thresh]
+
+            # Remove static regions
+            bias = bias[1000:-150]
+            lifted_pr = lifted_pr[1000:-150]
+            r_gt_unsorted = r_gt_unsorted[1000:-150]        
 
             # rolling var along last axis
             sort_pr = np.argsort(lifted_pr)
@@ -341,19 +378,15 @@ class UwbCalibrate(object):
             lifted_pr = lifted_pr[sort_pr]
             r_gt = r_gt_unsorted[sort_pr]
 
-            bias_std = np.std(self._rolling_window(bias.ravel(), std_window), axis=-1)
-            std_spl = UnivariateSpline(lifted_pr, bias_std, k=5)
-            bias_std = std_spl(lifted_pr)
-
-            # Fit spline
-            spl = UnivariateSpline(lifted_pr, bias)
+            spl, std_spl, bias_trunc, lifted_pr_trunc \
+                        = self._reject_outliers(bias, lifted_pr, std_window, chi_thresh)
             self.mean_spline[pair] = spl
+            bias_std = std_spl(lifted_pr)
             bias_fit = spl(lifted_pr)
 
             # PLOTTING
-            axs[0,lv0].scatter(lifted_pr, bias, label=r"Raw data", linestyle="dotted", s=1)
-            # axs[0,lv0].scatter(X_train, y_train, label="Observations")
-            axs[0,lv0].plot(lifted_pr, bias_fit, label="Fit")
+            axs[0,lv0].scatter(lifted_pr_trunc, bias_trunc, label=r"Raw data", linestyle="dotted", s=1)
+            axs[0,lv0].plot(lifted_pr, bias_fit, label=r"Fit")
             axs[0,lv0].fill_between(
                 lifted_pr.ravel(),
                 bias_fit - 1.96 * bias_std,
@@ -361,10 +394,8 @@ class UwbCalibrate(object):
                 alpha=0.5,
                 label=r"95% confidence interval",
             )
-            axs[0,lv0].legend()
-            axs[0,lv0].set_xlabel("$f(P_r)$")
-            axs[0,lv0].set_ylabel("Bias [m]")
-            # _ = axs[0,lv0].title("Gaussian process regression on noise-free dataset")
+            axs[0,lv0].set_xlabel(r"$f(P_r)$")
+            axs[0,lv0].set_ylabel(r"Bias [m]")
 
             ## Visualize std vs. Power
             axs[1,lv0].plot(lifted_pr, bias_std)
@@ -378,6 +409,8 @@ class UwbCalibrate(object):
 
             ## Separate plot with all splines
             axs2.plot(lifted_pr, bias_fit)
+
+        axs[0,-1].legend()
 
     def calibrate_antennas(self):
         """
@@ -471,7 +504,5 @@ class UwbCalibrate(object):
             axs.set_ylabel("Distance [m]")
             axs.set_xlabel("t [s]")
             axs.set_ylim([-1, 5])
-
-            plt.show()
 
         return range
