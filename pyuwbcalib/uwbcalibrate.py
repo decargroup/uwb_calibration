@@ -32,7 +32,7 @@ class UwbCalibrate(object):
 
     _c = 299702547  # speed of light
 
-    def __init__(self, processed_data, rm_static=True):
+    def __init__(self, processed_data, rm_static=True, training_ratio=0.8):
         """
         Constructor
         """
@@ -45,8 +45,14 @@ class UwbCalibrate(object):
 
         self.num_of_tags = processed_data.num_of_tags
 
-        self.ts_data = processed_data.ts_data
-        self.time_intervals = processed_data.time_intervals
+        if rm_static:
+            self.ts_data = {}
+            self.time_intervals = {}
+            self.ts_data[0], self.time_intervals[0] \
+                = self._remove_static_regions(processed_data.ts_data[0], processed_data.time_intervals[0])
+        else:
+            self.ts_data = processed_data.ts_data
+            self.time_intervals = processed_data.time_intervals
 
         self.range_idx = 1
         self.tx1_idx = 2
@@ -58,16 +64,106 @@ class UwbCalibrate(object):
         self.Pr1_idx = 8
         self.Pr2_idx = 9
 
-        if rm_static:
-            self._remove_static_regions()
+        self._split_test_data(training_ratio) 
 
-    def _remove_static_regions():
-        # TBD
+    def _split_test_data(self, training_ratio):
+        # TODO:
         pass
 
-    def _find_static_regions():
-        # TBD
-        pass
+    def _remove_static_regions(self, ts_data, time_intervals):
+        '''
+        Remove the static region in the extremes.
+        '''
+        lower_idxs, upper_idxs = self._find_static_extremes(ts_data, time_intervals)
+        
+        num_columns = 10
+        num_rows = lambda pair: upper_idxs[pair] - lower_idxs[pair] 
+        ts_data_trunc = {pair:np.zeros((num_rows(pair), num_columns)) for \
+                                                                pair in ts_data}
+        time_intervals_trunc = {pair:{} for pair in ts_data}
+
+        for pair in ts_data:
+            l_idx = lower_idxs[pair]
+            u_idx = upper_idxs[pair]
+            
+            for column in range(0,num_columns):
+                ts_data_trunc[pair][:,column] \
+                    = ts_data[pair][:,column][l_idx:u_idx]
+
+            for topic in time_intervals[pair]:
+                time_intervals_trunc[pair][topic] \
+                    = time_intervals[pair][topic][l_idx:u_idx]
+
+        return ts_data_trunc, time_intervals_trunc
+
+    @staticmethod
+    def _find_static_extremes(ts_data, time_intervals):
+        lower_idxs = {pair:[] for pair in ts_data}
+        upper_idxs = {pair:[] for pair in ts_data}
+        
+        thresh = 0.2
+
+        for pair in ts_data:
+            gt = time_intervals[pair]['r_gt']
+            
+            # Lower bound
+            p1 = gt[0]
+            p2 = gt[100]
+            p3 = gt[200]
+
+            mean = (p1+p2+p3)/3
+            cond1 = np.abs(p1 - mean) > thresh
+            cond2 = np.abs(p2 - mean) > thresh
+            cond3 = np.abs(p3 - mean) > thresh
+            if cond1 or cond2 or cond3:
+                lower_idxs[pair] = 0
+            else:
+                mean = np.mean(gt[:200])
+                deviation = gt - mean
+                deviation_bool = deviation > thresh
+
+                # Find the first 2 consecutive true values
+                found_idx = False
+                for lv0 in range(401, len(gt)-5):
+                    cond = np.all(deviation_bool[lv0:lv0+2])
+                    if cond:
+                        lower_idxs[pair] = lv0
+                        found_idx = True
+                        break
+
+                if not found_idx:
+                    lower_idxs[pair] = 0
+
+            # Upper bound
+            p1 = gt[-1]
+            p2 = gt[-100]
+            p3 = gt[-200]
+
+            mean = (p1+p2+p3)/3
+            cond1 = np.abs(p1 - mean) > thresh
+            cond2 = np.abs(p2 - mean) > thresh
+            cond3 = np.abs(p3 - mean) > thresh
+            if cond1 or cond2 or cond3:
+                upper_idxs[pair] = len(gt)
+            else:
+                mean = np.mean(gt[-200:])
+                deviation = gt - mean
+                deviation_bool = deviation > thresh
+
+                # Find the first 2 consecutive true values
+                found_idx = False
+                for lv0 in range(-401, -len(gt)+5):
+                    cond = np.all(deviation_bool[lv0:lv0-2])
+                    if cond:
+                        upper_idxs[pair] = lv0
+                        found_idx = True
+                        break
+
+                if not found_idx:
+                    upper_idxs[pair] = len(gt)
+
+        return lower_idxs, upper_idxs
+ 
 
     def _calculate_skew_gain(self, initiating_idx, target_idx):
         """
@@ -365,12 +461,7 @@ class UwbCalibrate(object):
             pr_thresh = 2
             bias = bias[lifted_pr < pr_thresh]
             r_gt_unsorted = r_gt_unsorted[lifted_pr < pr_thresh]
-            lifted_pr = lifted_pr[lifted_pr < pr_thresh]
-
-            # Remove static regions
-            bias = bias[1000:-150]
-            lifted_pr = lifted_pr[1000:-150]
-            r_gt_unsorted = r_gt_unsorted[1000:-150]        
+            lifted_pr = lifted_pr[lifted_pr < pr_thresh]   
 
             # rolling var along last axis
             sort_pr = np.argsort(lifted_pr)

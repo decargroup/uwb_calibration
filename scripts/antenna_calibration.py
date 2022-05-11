@@ -36,7 +36,7 @@ num_pairs = len(calib_obj.ts_data[0])
 meas_old = {pair:[] for pair in calib_obj.ts_data[0]}
 for lv0, pair in enumerate(calib_obj.ts_data[0]):
     meas_old[pair] = calib_obj.compute_range_meas(pair,
-                                                  visualize=False)
+                                                  visualize=True)
 
 plt.show(block=True)
 
@@ -119,12 +119,19 @@ for lv0, pair in enumerate(calib_obj.ts_data[0]):
     pr_bias = spl(0.5 * (lifted_Pr1 + lifted_Pr2))
     meas_calibrated = meas - pr_bias
 
-    axs[lv0].plot(meas[:1000]-gt[:1000], label = 'w/ Antenna Delay Calibration')
-    axs[lv0].plot(meas_calibrated[:1000]-gt[:1000], label = 'Fully Calibrated')
-    axs[lv0].plot(meas_old[pair][:1000]-gt[:1000], label = 'Raw')
+    axs[lv0].plot(meas-gt, label = 'w/ Antenna Delay Calibration')
+    axs[lv0].plot(meas_calibrated-gt, label = 'Fully Calibrated')
+    axs[lv0].plot(meas_old[pair]-gt, label = 'Raw')
     axs[lv0].set_ylabel("Range Error [m]")
     axs[lv0].set_xlabel("Measurement Number")
     axs[lv0].set_ylim([-0.35, 0.6])
+
+    print(np.mean(meas_old[pair]-gt))
+    print(np.mean(meas-gt))
+    print(np.mean(meas_calibrated-gt))
+    print(np.std(meas_old[pair]-gt))
+    print(np.std(meas-gt))
+    print(np.std(meas_calibrated-gt))
 
 axs[0].legend()
 plt.show(block=True)
