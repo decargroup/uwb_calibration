@@ -11,8 +11,7 @@ matplotlib.use('Qt5Agg')
 sns.set_theme()
 
 tag_ids=[4,1,3] # in the order of tripod1, tripod2, tripod3
-raw_obj = PostProcess(folder_prefix="datasets/2022_05_02/",
-                      file_prefix="test",
+raw_obj = PostProcess(file_path="datasets/2022_05_02/ros_bags/test1.bag",
                       num_meas=-1,
                       tag_ids=tag_ids)
 
@@ -107,7 +106,7 @@ if power_calib:
 # %% Final plotting
 num_pairs = len(calib_obj.ts_data)
 fig, axs = plt.subplots(num_pairs)
-for lv0, pair in enumerate(calib_obj.ts_data):
+for lv0, pair in enumerate(calib_obj.tag_pairs):
     meas = calib_obj.compute_range_meas(pair)
     gt = calib_obj.time_intervals[pair]["r_gt"]
 

@@ -40,7 +40,7 @@ class UwbCalibrate(object):
         self.tag_ids = processed_data.tag_ids
         self.mult_twr = processed_data.mult_twr
         self.num_meas = processed_data.num_meas
-
+        self.tag_pairs = processed_data.tag_pairs
         self.num_of_tags = processed_data.num_of_tags
 
         if rm_static:
@@ -268,7 +268,7 @@ class UwbCalibrate(object):
             num_of_pairs = len(self.time_intervals)
             fig, axs = plt.subplots(num_of_pairs)
 
-        for lv0, pair in enumerate(self.time_intervals):
+        for lv0, pair in enumerate(self.tag_pairs):
             x_hist, P_hist = self._clock_filter(pair, Q, R)
             
             self._update_tof_intervals(pair, x_hist[0,:])
@@ -443,7 +443,7 @@ class UwbCalibrate(object):
 
         self.mean_spline = {pair:[] for pair in self.ts_data}
 
-        for lv0, pair in enumerate(self.ts_data):
+        for lv0, pair in enumerate(self.tag_pairs):
             range = self.compute_range_meas(pair)
             bias = range - self.time_intervals[pair]["r_gt"]
             lifted_pr = self.lift(0.5*self.ts_data[pair][:,self.Pr1_idx] \
