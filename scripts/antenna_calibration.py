@@ -25,7 +25,7 @@ antenna_delay = True
 initiator_id = 4
 target_id = 1
 pair = (initiator_id, target_id)
-# raw_obj.visualize_raw_data(pair=(initiator_id,target_id))
+raw_obj.visualize_raw_data(pair=(initiator_id,target_id))
 
 # %%
 # TODO: Surely there is a better way to do this?? I inherit some attributes + lift function
@@ -59,6 +59,7 @@ if kf:
     plt.plot(t, meas_filtered, linewidth=1, label="Calibrated")
     plt.plot(t, calib_obj.time_intervals[pair]['r_gt'])
     ax.legend()
+
     plt.show(block=True)
 
 # %% Antenna delay: # TODO: Should we do power calibration first to remove outliers? 

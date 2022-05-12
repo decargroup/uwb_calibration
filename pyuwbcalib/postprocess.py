@@ -271,6 +271,11 @@ class PostProcess(object):
         """
         Compute the time intervals from the recorded timestamps.
 
+        PARAMETERS:
+        -----------
+        pair: tuple
+            A tuple with the (inititating tag, target_tag).
+
         RETURNS:
         --------
         intervals: dict[tuple: np.array(n,1)]
@@ -297,6 +302,10 @@ class PostProcess(object):
 
     ### ------------------------ INTERPOLATION METHODS ------------------------ ###
     def _interpolate_gt_to_uwb(self):
+        """
+        Interpolate the computed ground truth distance to the timestamps where measurements 
+        were recorded.
+        """
         for pair in self.tag_pairs:
             t_new = self.time_intervals[pair]["t"]
             try:
@@ -312,6 +321,23 @@ class PostProcess(object):
 
     @staticmethod
     def _interpolate_position(r, t_old, t_new):
+        """
+        Interpolate ground truth position.
+
+        PARAMETERS:
+        -----------
+        r: np.array(n,3)
+            Recorded ground-truth position at t_old.
+        t_old: np.array(n,)
+            The timestamps of the recorded ground-truth position.
+        t_new: np.array(n,)
+            The new keypoints for interpolation.
+
+        RETURNS:
+        --------
+        f(t_new): np.array(n,3)
+            Recorded ground-truth position interpolated at t_new.
+        """
         
         f = interp1d(t_old, r, kind='linear', fill_value='extrapolate')
 
@@ -321,11 +347,14 @@ class PostProcess(object):
 
     ### -------------------------- UNWRAPPING METHODS -------------------------- ###
     def _unwrap_all_clocks(self):
-        # --------------------- Unwrap dt ---------------------
+        """
+        Unwrap the clock for all the time-stamp measurements.
+        """
+        ### --- Unwrap dt --- ###
         # Timestamps are represented as uint32
         max_time_ns = 2**32 * self._to_ns
 
-        # ------- Unwrap time-stamps --------
+        ### --- Unwrap time-stamps --- ###
         for pair in self.tag_pairs: 
             # Check if a clock wrap occured at the first measurement, and unwrap
             if self.ts_data[pair][:,self.rx2_idx][0] < self.ts_data[pair][:,self.tx1_idx][0]:
@@ -364,6 +393,21 @@ class PostProcess(object):
 
     @staticmethod
     def _unwrap(data, max):
+        """
+        Unwraps data. 
+
+        PARAMETERS:
+        -----------
+        data: np.array(n,)
+            Data to be unwrapped.
+        max: float
+            Max value of the data where the wrapping occurs.
+
+        RETURNS:
+        --------
+        data: np.array(n,)
+            Unwrapped data.
+        """
         temp = data[1:] - data[:-1]
         idx = np.concatenate([np.array([0]), temp < 0])
 
@@ -376,63 +420,50 @@ class PostProcess(object):
         return data
 
     @staticmethod
-    def _unwrap_gt(t_sec, t, max):
+    def _unwrap_gt(t_sec, t_nsec, max):
+        """
+        Unwraps ground truth timestamps.
+        
+        PARAMETERS:
+        -----------
+        t_sec: np.array(n,)
+            Timestamps in seconds.
+        t_nsec: np.array(n,)
+            Timestamps in nanoseconds.
+        max: float
+            Max value of the data where the wrapping occurs.
+
+        RETURNS:
+        --------
+        t_nsec: np.array(n,)
+            Unwrapped timestamps in nanoseconds.
+        """
         iter = 0
-        for lv0 in range(len(t)-1):
+        for lv0 in range(len(t_nsec)-1):
             if t_sec[lv0+1] - t_sec[lv0] > 0:
                 iter += t_sec[lv0+1] - t_sec[lv0]
-            t[lv0+1] += iter*max    
+            t_nsec[lv0+1] += iter*max    
 
-        return t
-    ### ------------------------------------------------------------------------ ###
-
-
-    ### --------------------------- STITCHING METHODS -------------------------- ###
-    def _stitch_time_intervals(self, pair):
-        intervals_iter = self.time_intervals[pair]
-        all_interv = {}
-        all_interv["t"] = intervals_iter["t"]
-        all_interv["Ra1"] =  intervals_iter["Ra1"]
-        all_interv["Ra2"] =  intervals_iter["Ra2"]
-        all_interv["Db1"] =  intervals_iter["Db1"]
-        all_interv["Db2"] =  intervals_iter["Db2"]
-        all_interv["tof1"] = intervals_iter["tof1"]
-        all_interv["tof2"] = intervals_iter["tof2"]
-        all_interv["tof3"] = intervals_iter["tof3"]
-        all_interv["S1"] = intervals_iter["S1"]
-        all_interv["S2"] = intervals_iter["S2"]
-
-        return all_interv
-
-    def _stitch_power(self, pair):        
-        ts_iter = self.ts_data[pair]
-        all_Pr = {}
-        all_Pr["Pr1"] = ts_iter[:,self.Pr1_idx]
-        all_Pr["Pr2"] = ts_iter[:,self.Pr2_idx]
-
-        return all_Pr
-
-    def _stitch_bias(self, pair):
-        ts_iter = self.ts_data[pair]
-        interv_iter = self.time_intervals[pair]
-
-        # try:
-        bias = ts_iter[:,self.range_idx] - interv_iter["r_gt"]
-        # except:
-            # bias = np.hstack((bias, ts_iter[:,self.range_idx] - self.mean_gt_distance[pair[::-1]]))
-
-        return bias
+        return t_nsec
     ### ------------------------------------------------------------------------ ###
 
 
     ### --------------------------- PLOTTING METHODS --------------------------- ###
-    def _ss_twr_plotting(self, all_interv, pair):
+    def _ss_twr_plotting(self, pair):
+        """
+        Plot the single-sided TWR range measurements.
+
+        PARAMETERS:
+        -----------
+        pair: tuple
+            A tuple with the (inititating tag, target_tag).
+        """
         range = 0.5 * self._c / 1e9 * \
-            (all_interv["Ra1"] - all_interv["Db1"])
+            (self.time_intervals[pair]["Ra1"] - self.time_intervals[pair]["Db1"])
 
         fig, axs = plt.subplots(1)
 
-        axs.plot(all_interv["t"]/1e9, range, label='Range Measurements')
+        axs.plot(self.time_intervals[pair]["t"]/1e9, range, label='Range Measurements')
         axs.scatter(self._gt_distance[pair]["t"]/1e9, 
                     self._gt_distance[pair]["dist"], 
                     s=1,
@@ -444,13 +475,22 @@ class PostProcess(object):
 
         axs.legend()
 
-    def _ds_twr_plotting(self, all_interv, pair):
+    def _ds_twr_plotting(self, pair):
+        """
+        Plot the double-sided TWR range measurements.
+
+        PARAMETERS:
+        -----------
+        pair: tuple
+            A tuple with the (inititating tag, target_tag).
+        """
         range = 0.5 * self._c / 1e9 * \
-            (all_interv["Ra1"] - (all_interv["Ra2"] / all_interv["Db2"]) * all_interv["Db1"])
+            (self.time_intervals[pair]["Ra1"] - (self.time_intervals[pair]["Ra2"] \
+                / self.time_intervals[pair]["Db2"]) * self.time_intervals[pair]["Db1"])
 
         fig, axs = plt.subplots(1)
 
-        axs.plot(all_interv["t"]/1e9, range, label='Range Measurements')
+        axs.plot(self.time_intervals[pair]["t"]/1e9, range, label='Range Measurements')
         axs.scatter(self._gt_distance[pair]["t"]/1e9, \
                     self._gt_distance[pair]["dist"], s=1, \
                     label='Ground Truth', color='r')
@@ -463,12 +503,43 @@ class PostProcess(object):
 
     @staticmethod
     def lift(x, alpha=-82):
+        """
+        Lifting function for better visualization and calibration. 
+        Based on Cano, J., Pages, G., Chaumette, E., & Le Ny, J. (2022). Clock 
+                 and Power-Induced Bias Correction for UWB Time-of-Flight Measurements.
+                 IEEE Robotics and Automation Letters, 7(2), 2431-2438. 
+                 https://doi.org/10.1109/LRA.2022.3143202
+
+        PARAMETERS:
+        -----------
+        x: np.array(n,1)
+            Input to lifting function. Received Power in dBm in this context.
+        alpha: scalar
+            Centering parameter. Default: -82 dBm.
+
+        RETURNS:
+        --------
+        intervals: dict[tuple: np.array(n,1)]
+            dict with the tag ID pairs as the keys. Contains computed time intervals and power.
+        """
         return 10**((x - alpha) /10)
 
     def visualize_raw_data(self, pair=(1,2), alpha=-82):
-        all_interv = self._stitch_time_intervals(pair)
-        all_Pr = self._stitch_power(pair)
-        bias = self._stitch_bias(pair)
+        """
+        Generates multiple plots to visualize the raw data. 
+        
+        PARAMETERS:
+        -----------
+        pair: tuple
+            A tuple with the (inititating tag, target_tag).
+        alpha: scalar
+            Centering parameter. Default: -82 dBm.
+        """
+        interv = self.time_intervals[pair]
+        Pr = {}
+        Pr["Pr1"] = self.ts_data[pair][:,self.Pr1_idx]
+        Pr["Pr2"] = self.ts_data[pair][:,self.Pr2_idx]
+        bias = self.ts_data[pair][:,self.range_idx] - interv["r_gt"]
 
         # Axes limits
         bias_l = -0.5
@@ -476,22 +547,22 @@ class PostProcess(object):
         Pr_l = -110
         Pr_h = -80
 
-        # RANGE MEASUREMENTS #
+        ### --- RANGE MEASUREMENTS --- ###
         if self.mult_twr:
-            self._ds_twr_plotting(all_interv, pair)
+            self._ds_twr_plotting(pair)
         else:
-            self._ss_twr_plotting(all_interv, pair)
+            self._ss_twr_plotting(pair)
 
-        ### TIME INTERVALS 
+        ### --- TIME INTERVALS --- ###
         fig, axs = plt.subplots(3,3)
 
         col_num = 0
         row_num = 0
-        for interv_str in all_interv:
-            if interv_str == "t" or interv_str == "r_gt":
+        for interv_str in interv:
+            if interv_str == "dt" or interv_str == "t" or interv_str == "r_gt":
                 continue
-            interv = all_interv[interv_str]
-            axs[row_num,col_num].plot(all_interv["t"]/1e9,interv)
+            interv_data = interv[interv_str]
+            axs[row_num,col_num].plot(interv["t"]/1e9,interv_data)
             axs[row_num,col_num].set_ylabel(interv_str + " [ns]")
             axs[row_num,col_num].set_xlabel("t [s]")
 
@@ -501,27 +572,27 @@ class PostProcess(object):
             else:
                 col_num += 1
 
-        #### POWER VS BIAS ###
-        fig, axs = plt.subplots(len(all_Pr))
+        ### --- POWER VS BIAS --- ###
+        fig, axs = plt.subplots(len(Pr))
 
-        for i, Pr_str in enumerate(all_Pr):
-            Pr = all_Pr[Pr_str]
-            axs[i].scatter(self.lift(Pr),bias,s=1)
+        for i, Pr_str in enumerate(Pr):
+            Pr_iter = Pr[Pr_str]
+            axs[i].scatter(self.lift(Pr_iter),bias,s=1)
             axs[i].set_ylabel("Bias [m]")
             axs[i].set_xlabel("$f("+ Pr_str + ")$ [dBm]")
             # axs[i].set_xlim([self.lift(Pr_l), self.lift(Pr_h)])
             # axs[i].set_ylim([bias_l, bias_u])
 
-        # BIAS AND POWER vs. TIME ##
+        ### --- BIAS AND POWER vs. TIME --- ###
         fig, axs = plt.subplots(3)
 
-        axs[0].plot(all_interv["t"]/1e9,bias)
+        axs[0].plot(interv["t"]/1e9,bias)
         axs[0].set_ylabel("Bias [m]")
         # axs[0].set_ylim([bias_l, bias_u])
 
-        for i, Pr_str in enumerate(all_Pr):
-            Pr = all_Pr[Pr_str]
-            axs[i+1].plot(all_interv["t"]/1e9,Pr)
+        for i, Pr_str in enumerate(Pr):
+            Pr_iter = Pr[Pr_str]
+            axs[i+1].plot(interv["t"]/1e9,Pr_iter)
             axs[i+1].set_ylabel(Pr_str + " [dBm]")
             axs[i+1].set_ylim([Pr_l, Pr_h])
 
