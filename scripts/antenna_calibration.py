@@ -29,7 +29,7 @@ pair = (initiator_id, target_id)
 # raw_obj.visualize_raw_data(pair=(initiator_id,target_id))
 
 # %%
-# TODO: Surely there is a better way to do this??
+# TODO: Surely there is a better way to do this?? I inherit some attributes + lift function
 calib_obj = UwbCalibrate(raw_obj, rm_static=True)
 
 ## Pre-calibration

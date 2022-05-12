@@ -37,7 +37,6 @@ class UwbCalibrate(object):
         Constructor
         """
         # Retrieve attributes from processed_data
-        # TODO: there must be a better way to do this without confusing intelliSense
         self.tag_ids = processed_data.tag_ids
         self.mult_twr = processed_data.mult_twr
         self.num_meas = processed_data.num_meas
@@ -62,6 +61,8 @@ class UwbCalibrate(object):
         self.rx3_idx = 7
         self.Pr1_idx = 8
         self.Pr2_idx = 9
+
+        self.lift = processed_data.lift
 
         self._split_test_data(training_ratio) 
 
@@ -403,10 +404,6 @@ class UwbCalibrate(object):
         strides = a.strides + (a.strides[-1],)
         return np.lib.stride_tricks.as_strided(a, shape=shape, strides=strides)
 
-    @staticmethod
-    def lift(x, alpha=-82):
-        return 10**((x - alpha) /10)
-
     def _reject_outliers(self, bias, lifted_pr, std_window, chi_thresh):
         outlier_bias = np.empty(0,)
         outlier_lifted_pr = np.empty(0,)
@@ -453,7 +450,6 @@ class UwbCalibrate(object):
                                   + 0.5*self.ts_data[pair][:,self.Pr2_idx])
             r_gt_unsorted = self.time_intervals[pair]["r_gt"]
 
-            ## TODO: REMOVE THIS ONCE PROPER OUTLIER DETECTION IS IMPLEMENTED
             pr_thresh = 2
             bias = bias[lifted_pr < pr_thresh]
             r_gt_unsorted = r_gt_unsorted[lifted_pr < pr_thresh]
@@ -556,7 +552,7 @@ class UwbCalibrate(object):
         TODO: What about D1 and D2? This seems to be a problem.
               We might have to calibrate for TX and RX delays separately
               if we are to proceed with Kalman filtering with this architecture.
-        TODO: tof1, tof2, and tof3 as well.
+        TODO: tof1, tof2, and tof3 as well, once individual delays are take into consideration.
         """
         for key in self.time_intervals:
             if key[0] == id:
@@ -565,7 +561,7 @@ class UwbCalibrate(object):
                 self.time_intervals[key]["Db1"] -= delay
 
     def compute_range_meas(self, pair=(1,2), visualize=False, owr = False):
-        #TODO: Inherit this function from PostProcess?
+        # TODO: Inherit this function from PostProcess?
         interv = self.time_intervals[pair]
         if owr and self.mult_twr:
             range = 1/2 * self._c / 1e9 \

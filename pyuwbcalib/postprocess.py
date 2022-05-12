@@ -352,14 +352,14 @@ class PostProcess(object):
 
         axs.legend()
 
+    @staticmethod
+    def lift(x, alpha=-82):
+        return 10**((x - alpha) /10)
+
     def visualize_raw_data(self, pair=(1,2), alpha=-82):
         all_interv = self._stitch_time_intervals(pair)
         all_Pr = self._stitch_power(pair)
         bias = self._stitch_bias(pair)
-
-        # Justin's lifting function
-        alpha = -82 # TODO: make a function of the measured power data
-        lift = lambda x: 10**((x - alpha) /10)
 
         # Axes limits
         bias_l = -0.5
@@ -397,10 +397,10 @@ class PostProcess(object):
 
         for i, Pr_str in enumerate(all_Pr):
             Pr = all_Pr[Pr_str]
-            axs[i].scatter(lift(Pr),bias,s=1)
+            axs[i].scatter(self.lift(Pr),bias,s=1)
             axs[i].set_ylabel("Bias [m]")
             axs[i].set_xlabel("$f("+ Pr_str + ")$ [dBm]")
-            # axs[i].set_xlim([lift(Pr_l), lift(Pr_h)])
+            # axs[i].set_xlim([self.lift(Pr_l), self.lift(Pr_h)])
             # axs[i].set_ylim([bias_l, bias_u])
 
         ############################## BIAS AND POWER vs. TIME ###################################
