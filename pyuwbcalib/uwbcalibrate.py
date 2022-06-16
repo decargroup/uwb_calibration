@@ -32,21 +32,25 @@ class UwbCalibrate(object):
 
     _c = 299702547  # speed of light
 
-    def __init__(self, processed_data, outliers=False):
+    def __init__(self, processed_data, rm_static=True, training_ratio=0.8):
         """
         Constructor
         """
         # Retrieve attributes from processed_data
-        # TODO: there must be a better way to do this without confusing intelliSense
-        self.num_of_recordings = processed_data.num_of_recordings
         self.tag_ids = processed_data.tag_ids
         self.mult_twr = processed_data.mult_twr
         self.num_meas = processed_data.num_meas
-
+        self.tag_pairs = processed_data.tag_pairs
         self.num_of_tags = processed_data.num_of_tags
 
-        self.ts_data = processed_data.ts_data
-        self.time_intervals = processed_data.time_intervals
+        if rm_static:
+            self.ts_data = {}
+            self.time_intervals = {}
+            self.ts_data, self.time_intervals \
+                = self._remove_static_regions(processed_data.ts_data, processed_data.time_intervals)
+        else:
+            self.ts_data = processed_data.ts_data
+            self.time_intervals = processed_data.time_intervals
 
         self.range_idx = 1
         self.tx1_idx = 2
@@ -57,13 +61,109 @@ class UwbCalibrate(object):
         self.rx3_idx = 7
         self.Pr1_idx = 8
         self.Pr2_idx = 9
-        
-        if not outliers:
-            self._remove_outliers()
 
-    def _remove_outliers(self):
-        # TODO: implement an outlier rejection algorithm.
+        self.lift = processed_data.lift
+
+        self._split_test_data(training_ratio) 
+
+    def _split_test_data(self, training_ratio):
+        # TODO:
         pass
+
+    def _remove_static_regions(self, ts_data, time_intervals):
+        '''
+        Remove the static region in the extremes.
+        '''
+        lower_idxs, upper_idxs = self._find_static_extremes(ts_data, time_intervals)
+        
+        num_columns = 10
+        num_rows = lambda pair: upper_idxs[pair] - lower_idxs[pair] 
+        ts_data_trunc = {pair:np.zeros((num_rows(pair), num_columns)) for \
+                                                                pair in ts_data}
+        time_intervals_trunc = {pair:{} for pair in ts_data}
+
+        for pair in ts_data:
+            l_idx = lower_idxs[pair]
+            u_idx = upper_idxs[pair]
+            
+            for column in range(0,num_columns):
+                ts_data_trunc[pair][:,column] \
+                    = ts_data[pair][:,column][l_idx:u_idx]
+
+            for topic in time_intervals[pair]:
+                time_intervals_trunc[pair][topic] \
+                    = time_intervals[pair][topic][l_idx:u_idx]
+
+        return ts_data_trunc, time_intervals_trunc
+
+    @staticmethod
+    def _find_static_extremes(ts_data, time_intervals):
+        lower_idxs = {pair:[] for pair in ts_data}
+        upper_idxs = {pair:[] for pair in ts_data}
+        
+        thresh = 0.2
+
+        for pair in ts_data:
+            gt = time_intervals[pair]['r_gt']
+            
+            # Lower bound
+            p1 = gt[0]
+            p2 = gt[100]
+            p3 = gt[200]
+
+            mean = (p1+p2+p3)/3
+            cond1 = np.abs(p1 - mean) > thresh
+            cond2 = np.abs(p2 - mean) > thresh
+            cond3 = np.abs(p3 - mean) > thresh
+            if cond1 or cond2 or cond3:
+                lower_idxs[pair] = 0
+            else:
+                mean = np.mean(gt[:200])
+                deviation = gt - mean
+                deviation_bool = deviation > thresh
+
+                # Find the first 2 consecutive true values
+                found_idx = False
+                for lv0 in range(401, len(gt)-5):
+                    cond = np.all(deviation_bool[lv0:lv0+2])
+                    if cond:
+                        lower_idxs[pair] = lv0
+                        found_idx = True
+                        break
+
+                if not found_idx:
+                    lower_idxs[pair] = 0
+
+            # Upper bound
+            p1 = gt[-1]
+            p2 = gt[-100]
+            p3 = gt[-200]
+
+            mean = (p1+p2+p3)/3
+            cond1 = np.abs(p1 - mean) > thresh
+            cond2 = np.abs(p2 - mean) > thresh
+            cond3 = np.abs(p3 - mean) > thresh
+            if cond1 or cond2 or cond3:
+                upper_idxs[pair] = len(gt)
+            else:
+                mean = np.mean(gt[-200:])
+                deviation = gt - mean
+                deviation_bool = deviation > thresh
+
+                # Find the first 2 consecutive true values
+                found_idx = False
+                for lv0 in range(-401, -len(gt)+5):
+                    cond = np.all(deviation_bool[lv0:lv0-2])
+                    if cond:
+                        upper_idxs[pair] = lv0
+                        found_idx = True
+                        break
+
+                if not found_idx:
+                    upper_idxs[pair] = len(gt)
+
+        return lower_idxs, upper_idxs
+ 
 
     def _calculate_skew_gain(self, initiating_idx, target_idx):
         """
@@ -85,8 +185,8 @@ class UwbCalibrate(object):
         target_id = self.tag_ids[target_idx]
         pair = (initiating_id, target_id)
 
-        Ra2 = self.time_intervals[0][pair]["Ra2"]
-        Db2 = self.time_intervals[0][pair]["Db2"]
+        Ra2 = self.time_intervals[pair]["Ra2"]
+        Db2 = self.time_intervals[pair]["Db2"]
 
         if self.mult_twr:
             return Ra2 / Db2
@@ -138,9 +238,9 @@ class UwbCalibrate(object):
         target_id = self.tag_ids[target_idx]
         pair = (initiating_id, target_id)
 
-        gt = self.time_intervals[0][pair]["r_gt"]
-        Ra1 = self.time_intervals[0][pair]["Ra1"]
-        Db1 = self.time_intervals[0][pair]["Db1"]
+        gt = self.time_intervals[pair]["r_gt"]
+        Ra1 = self.time_intervals[pair]["Ra1"]
+        Db1 = self.time_intervals[pair]["Db1"]
 
         b = 1 / self._c * gt * 1e9 - 0.5 * (Ra1) + 0.5 * K * (Db1)
 
@@ -165,43 +265,40 @@ class UwbCalibrate(object):
 
     def filter_data(self, Q, R, visualize=False):
         if visualize:
-            num_of_pairs = len(self.time_intervals[0])
-            fig, axs = plt.subplots(self.num_of_recordings, num_of_pairs)
-            axs = axs.reshape(self.num_of_recordings, num_of_pairs)
+            num_of_pairs = len(self.time_intervals)
+            fig, axs = plt.subplots(num_of_pairs)
 
-        for lv0, recording in enumerate(self.time_intervals):
-            for lv1, pair in enumerate(self.time_intervals[recording]):
-                x_hist, P_hist = self._clock_filter(recording, pair, Q, R)
-                
-                self._update_tof_intervals(recording, pair, x_hist[0,:])
+        for lv0, pair in enumerate(self.tag_pairs):
+            x_hist, P_hist = self._clock_filter(pair, Q, R)
+            
+            self._update_tof_intervals(pair, x_hist[0,:])
 
-                if visualize: 
-                    Ra2 = self.time_intervals[recording][pair]["Ra2"]
-                    Db2 = self.time_intervals[recording][pair]["Db2"]
-                    S1 = self.time_intervals[recording][pair]["S1"]
-                    S2 = self.time_intervals[recording][pair]["S2"]
-                    Db1 = self.time_intervals[recording][pair]["Db1"]
-                    y1 = 0.5*(S1 - S2)
-                    y2 = Db2 - Ra2
-                    y_tau = - y1 - 0.5*(Db1/(Db2-Db1))*y2
-                    # axs[lv0,lv1].plot(-y_tau)
+            if visualize: 
+                Ra2 = self.time_intervals[pair]["Ra2"]
+                Db2 = self.time_intervals[pair]["Db2"]
+                S1 = self.time_intervals[pair]["S1"]
+                S2 = self.time_intervals[pair]["S2"]
+                Db1 = self.time_intervals[pair]["Db1"]
+                y1 = 0.5*(S1 - S2)
+                y2 = Db2 - Ra2
+                y_tau = - y1 - 0.5*(Db1/(Db2-Db1))*y2
 
-                    self._plot_kf(x_hist, P_hist, axs[lv0,lv1], y_tau)
+                self._plot_kf(x_hist, P_hist, axs[lv0], y_tau)
 
         if visualize:
             plt.show()
 
-    def _update_tof_intervals(self, recording, pair, tau):
+    def _update_tof_intervals(self, pair, tau):
         # TODO: Take uncertainty into consideration?
-        self.time_intervals[recording][pair]["tof1"] \
-            = self.time_intervals[recording][pair]["tof1"] - tau
+        self.time_intervals[pair]["tof1"] \
+            = self.time_intervals[pair]["tof1"] - tau
 
-        self.time_intervals[recording][pair]["tof2"] \
-            = self.time_intervals[recording][pair]["tof2"] + tau
+        self.time_intervals[pair]["tof2"] \
+            = self.time_intervals[pair]["tof2"] + tau
 
         if self.mult_twr:
-            self.time_intervals[recording][pair]["tof3"] \
-                = self.time_intervals[recording][pair]["tof3"] + tau
+            self.time_intervals[pair]["tof3"] \
+                = self.time_intervals[pair]["tof3"] + tau
 
     @staticmethod
     def _plot_kf(x, P, axs, y_tau):
@@ -209,19 +306,19 @@ class UwbCalibrate(object):
 
         axs.ticklabel_format(style='plain')
         
-        # P_iter = P[1,1,:]
-        # P_iter = P_iter.reshape(-1,)
-        # axs.plot(x[0,:] + 3*np.sqrt(P_iter))
-        # axs.plot(x[0,:] - 3*np.sqrt(P_iter))
+        P_iter = P[1,1,:]
+        P_iter = P_iter.reshape(-1,)
+        axs.plot(x[0,:] + 3*np.sqrt(P_iter))
+        axs.plot(x[0,:] - 3*np.sqrt(P_iter))
 
-    def _clock_filter(self, recording, pair, Q, R):
+    def _clock_filter(self, pair, Q, R):
         # Intervals
-        dt = self.time_intervals[recording][pair]["dt"]
-        Ra2 = self.time_intervals[recording][pair]["Ra2"]
-        Db2 = self.time_intervals[recording][pair]["Db2"]
-        S1 = self.time_intervals[recording][pair]["S1"]
-        S2 = self.time_intervals[recording][pair]["S2"]
-        Db1 = self.time_intervals[recording][pair]["Db1"]
+        dt = self.time_intervals[pair]["dt"]
+        Ra2 = self.time_intervals[pair]["Ra2"]
+        Db2 = self.time_intervals[pair]["Db2"]
+        S1 = self.time_intervals[pair]["S1"]
+        S2 = self.time_intervals[pair]["S2"]
+        Db1 = self.time_intervals[pair]["Db1"]
 
         # Storage variables
         n = dt.size
@@ -307,67 +404,96 @@ class UwbCalibrate(object):
         strides = a.strides + (a.strides[-1],)
         return np.lib.stride_tricks.as_strided(a, shape=shape, strides=strides)
 
-    def fit_model(self, pair, std_window=50):
-        alpha = -82 # TODO: Copy this over from PostProcess
-        lift = lambda x: 10**((x - alpha) /10)
+    def _reject_outliers(self, bias, lifted_pr, std_window, chi_thresh):
+        outlier_bias = np.empty(0,)
+        outlier_lifted_pr = np.empty(0,)
+        while True:
+            # Fit 
+            bias_std = np.std(self._rolling_window(bias.ravel(), std_window), axis=-1)
+            std_spl = UnivariateSpline(lifted_pr, bias_std, k=3)
+            bias_std = std_spl(lifted_pr)
 
-        bias = self.ts_data[0][pair][:,self.range_idx] - self.time_intervals[0][pair]["r_gt"]
-        lifted_pr = lift(self.ts_data[0][pair][:,self.Pr1_idx])
-        r_gt_unsorted = self.time_intervals[0][pair]["r_gt"]
+            # Fit spline
+            spl = UnivariateSpline(lifted_pr, bias)
+            bias_fit = spl(lifted_pr)
 
-        ## TODO: REMOVE THIS ONCE PROPER OUTLIER DETECTION IS IMPLEMENTED
-        thresh = 10
-        keep_idx = np.logical_and(bias < thresh, lifted_pr < 1.5)
-        bias = bias[keep_idx]
-        lifted_pr = lifted_pr[keep_idx]
-        r_gt_unsorted = r_gt_unsorted[keep_idx]
-        bias = bias[200:-200]
-        lifted_pr = lifted_pr[200:-200]
-        r_gt_unsorted = r_gt_unsorted[200:-200]        
+            # Remove outliers
+            norm_e_squared = (bias - bias_fit)**2 / bias_std**2
+            outliers = norm_e_squared > chi_thresh
+            if np.sum(outliers):
+                outlier_bias = np.hstack((outlier_bias, bias[outliers]))
+                bias = bias[~outliers]
 
-        # rolling var along last axis
-        sort_pr = np.argsort(lifted_pr)
-        bias = bias[sort_pr]
-        lifted_pr = lifted_pr[sort_pr]
-        r_gt = r_gt_unsorted[sort_pr]
+                outlier_lifted_pr = np.hstack((outlier_lifted_pr, lifted_pr[outliers]))
+                lifted_pr = lifted_pr[~outliers] 
+            else:
+                break
 
-        bias_std = np.std(self._rolling_window(bias.ravel(), std_window), axis=-1)
-        std_spl = UnivariateSpline(lifted_pr, bias_std, k=5)
-        bias_std = std_spl(lifted_pr)
+        fig, axs = plt.subplots(1)
 
-        # Fit spline
-        spl = UnivariateSpline(lifted_pr, bias)
-        bias_fit = spl(lifted_pr)
+        axs.scatter(lifted_pr, bias)
+        axs.scatter(outlier_lifted_pr, outlier_bias)
 
-        # PLOTTING
-        fig, axs = plt.subplots(3,1)
+        return spl, std_spl, bias, lifted_pr
 
-        axs[0].scatter(lifted_pr, bias, label=r"Raw data", linestyle="dotted", s=1)
-        # axs[0].scatter(X_train, y_train, label="Observations")
-        axs[0].plot(lifted_pr, bias_fit, label="Fit")
-        axs[0].fill_between(
-            lifted_pr.ravel(),
-            bias_fit - 1.96 * bias_std,
-            bias_fit + 1.96 * bias_std,
-            alpha=0.5,
-            label=r"95% confidence interval",
-        )
-        axs[0].legend()
-        axs[0].set_xlabel("$f(P_r)$")
-        axs[0].set_ylabel("Bias [m]")
-        # _ = axs[0].title("Gaussian process regression on noise-free dataset")
+    def fit_model(self, std_window=50, chi_thresh=10.8):
+        num_pairs = len(self.ts_data)
+        fig, axs = plt.subplots(3,num_pairs)
+        fig2, axs2 = plt.subplots(1) 
 
-        ## Visualize std vs. Power
-        axs[1].plot(lifted_pr, bias_std)
-        axs[1].set_xlabel("$f(P_r)$")
-        axs[1].set_ylabel("Bias std [m]")
+        self.mean_spline = {pair:[] for pair in self.ts_data}
 
-        ## Visualize std vs. distance
-        axs[2].scatter(r_gt, bias_std, s=1)
-        axs[2].set_xlabel("Ground truth distance [m]")
-        axs[2].set_ylabel("Bias std [m]")
+        for lv0, pair in enumerate(self.tag_pairs):
+            range = self.compute_range_meas(pair)
+            bias = range - self.time_intervals[pair]["r_gt"]
+            lifted_pr = self.lift(0.5*self.ts_data[pair][:,self.Pr1_idx] \
+                                  + 0.5*self.ts_data[pair][:,self.Pr2_idx])
+            r_gt_unsorted = self.time_intervals[pair]["r_gt"]
 
-        plt.show()
+            pr_thresh = 2
+            bias = bias[lifted_pr < pr_thresh]
+            r_gt_unsorted = r_gt_unsorted[lifted_pr < pr_thresh]
+            lifted_pr = lifted_pr[lifted_pr < pr_thresh]   
+
+            # rolling var along last axis
+            sort_pr = np.argsort(lifted_pr)
+            bias = bias[sort_pr]
+            lifted_pr = lifted_pr[sort_pr]
+            r_gt = r_gt_unsorted[sort_pr]
+
+            spl, std_spl, bias_trunc, lifted_pr_trunc \
+                        = self._reject_outliers(bias, lifted_pr, std_window, chi_thresh)
+            self.mean_spline[pair] = spl
+            bias_std = std_spl(lifted_pr)
+            bias_fit = spl(lifted_pr)
+
+            # PLOTTING
+            axs[0,lv0].scatter(lifted_pr_trunc, bias_trunc, label=r"Raw data", linestyle="dotted", s=1)
+            axs[0,lv0].plot(lifted_pr, bias_fit, label=r"Fit")
+            axs[0,lv0].fill_between(
+                lifted_pr.ravel(),
+                bias_fit - 1.96 * bias_std,
+                bias_fit + 1.96 * bias_std,
+                alpha=0.5,
+                label=r"95% confidence interval",
+            )
+            axs[0,lv0].set_xlabel(r"$f(P_r)$")
+            axs[0,lv0].set_ylabel(r"Bias [m]")
+
+            ## Visualize std vs. Power
+            axs[1,lv0].plot(lifted_pr, bias_std)
+            axs[1,lv0].set_xlabel("$f(P_r)$")
+            axs[1,lv0].set_ylabel("Bias std [m]")
+
+            ## Visualize std vs. distance
+            axs[2,lv0].scatter(r_gt, bias_std, s=1)
+            axs[2,lv0].set_xlabel("Ground truth distance [m]")
+            axs[2,lv0].set_ylabel("Bias std [m]")
+
+            ## Separate plot with all splines
+            axs2.plot(lifted_pr, bias_fit)
+
+        axs[0,-1].legend()
 
     def calibrate_antennas(self):
         """
@@ -426,21 +552,22 @@ class UwbCalibrate(object):
         TODO: What about D1 and D2? This seems to be a problem.
               We might have to calibrate for TX and RX delays separately
               if we are to proceed with Kalman filtering with this architecture.
+        TODO: tof1, tof2, and tof3 as well, once individual delays are take into consideration.
         """
-        for key in self.time_intervals[0]:
+        for key in self.time_intervals:
             if key[0] == id:
-                self.time_intervals[0][key]["Ra1"] += delay
+                self.time_intervals[key]["Ra1"] += delay
             elif key[1] == id:
-                self.time_intervals[0][key]["Db1"] -= delay
+                self.time_intervals[key]["Db1"] -= delay
 
     def compute_range_meas(self, pair=(1,2), visualize=False, owr = False):
-        #TODO: Inherit this function from PostProcess?
-        interv = self.time_intervals[0][pair]
+        # TODO: Inherit this function from PostProcess?
+        interv = self.time_intervals[pair]
         if owr and self.mult_twr:
             range = 1/2 * self._c / 1e9 \
                     * (abs(interv["tof1"]) \
                        + abs(interv["tof2"]) \
-                       + 0*abs(interv["tof3"]))
+                       + 0*abs(interv["tof3"])) # TODO: why *0? Antenna delay?
         elif owr:
             range = 1/2 * self._c / 1e9 \
                     * (abs(interv["tof1"]) \
@@ -460,7 +587,5 @@ class UwbCalibrate(object):
             axs.set_ylabel("Distance [m]")
             axs.set_xlabel("t [s]")
             axs.set_ylim([-1, 5])
-
-            plt.show()
 
         return range
