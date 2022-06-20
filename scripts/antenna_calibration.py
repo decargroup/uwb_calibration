@@ -16,7 +16,7 @@ raw_obj = PostProcess(file_path="datasets/2022_05_02/ros_bags/test1.bag",
                       tag_ids=tag_ids)
 
 
-plt.show(block=True)
+# plt.show(block=True)
 
 # %%
 kf = False
@@ -60,7 +60,7 @@ if kf:
     plt.plot(t, calib_obj.time_intervals[pair]['r_gt'])
     ax.legend()
 
-    plt.show(block=True)
+    # plt.show(block=True)
 
 # %% Antenna delay: # TODO: Should we do power calibration first to remove outliers? 
                     # TODO: Alternatively, could do robust LS
@@ -87,7 +87,7 @@ if antenna_delay:
     axs[0].set_ylim(0, 4)
     axs[0].plot(calib_obj.time_intervals[pair]["r_gt"], linewidth=3, label="GT")
     axs[0].plot(meas_old[pair], linewidth=1, label="Raw")
-    axs[0].plot(meas_new, linewidth=1, label="Calibrated")
+    axs[0].plot(meas_new, linewidth=1, label="Antenna-Delay Calibrated")
     axs[0].legend()
 
     axs[1].set_title("Error for pair " + str(pair))
@@ -95,7 +95,7 @@ if antenna_delay:
     axs[1].set_ylabel("Range Error [m]")
     axs[1].set_ylim(-0.4, 0.8)
     axs[1].plot(meas_old[pair] - calib_obj.time_intervals[pair]["r_gt"], linewidth=1, label="Raw")
-    axs[1].plot(meas_new - calib_obj.time_intervals[pair]["r_gt"], linewidth=1, label="Calibrated")
+    axs[1].plot(meas_new - calib_obj.time_intervals[pair]["r_gt"], linewidth=1, label="Antenna-Delay Calibrated")
     axs[1].legend()
 
     # %%
@@ -127,12 +127,13 @@ for lv0, pair in enumerate(calib_obj.tag_pairs):
     axs[lv0].set_xlabel("Measurement Number")
     axs[lv0].set_ylim([-0.35, 0.6])
 
-    print(np.mean(meas_old[pair]-gt))
-    print(np.mean(meas-gt))
-    print(np.mean(meas_calibrated-gt))
-    print(np.std(meas_old[pair]-gt))
-    print(np.std(meas-gt))
-    print(np.std(meas_calibrated-gt))
+    print("Raw Mean: "+ str(np.mean(meas_old[pair]-gt)))
+    print("Antenna-Calibrated Mean: " + str(np.mean(meas-gt)))
+    print("Fully-Calibrated Mean: " + str(np.mean(meas_calibrated-gt)))
+    print("Raw Std: "+ str(np.std(meas_old[pair]-gt)))
+    print("Antenna-Calibrated Std: " + str(np.std(meas-gt)))
+    print("Fully-Calibrated Std: " + str(np.std(meas_calibrated-gt)))
+    print("---------------------------------------------------------------")
 
 axs[0].legend()
 plt.show(block=True)
