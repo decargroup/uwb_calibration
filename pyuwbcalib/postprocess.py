@@ -24,25 +24,28 @@ class PostProcess(object):
 
     TODO 1: Check for missing rigid bodies when checking bag files.
          2: Add tests.
+         3: Should I do all this in Pandas?
     """
 
     _c = 299702547 # speed of light
     _to_ns = 1e9 * (1.0 / 499.2e6 / 128.0) # DW time unit to nanoseconds
 
-    def __init__(self, file_path, tag_ids=[1,2,3], mult_twr=True, num_meas=-1):
+    def __init__(self, file_path, tag_ids, moment_arms, mult_twr=True, num_meas=-1, ranging_with_self=False):
         """
         Constructor.
         """
         self.file_path = file_path
 
         self.tag_ids = tag_ids
+        self.moment_arms = moment_arms
         self.mult_twr = mult_twr
         self.num_meas = num_meas
+        self.ranging_with_self = ranging_with_self
 
         self.num_of_tags = len(tag_ids)
 
-        self.r = [] # stores ground truth positions
-        self.phi = {} # stores ground truth rotation vectors
+        self.r = [] # stores ground truth positions, per robot
+        self.phi = {} # stores ground truth rotation vectors, per robot
         self._gt_distance = [] # stores ground truth distance between pairs
         self.ts_data = {} # stores measured raw timestamps and power during ranging, per pair
         self.time_intervals = {} # stores time intervals and power data, per pair
@@ -54,60 +57,29 @@ class PostProcess(object):
 
     def _preprocess_data(self):
         """
-        Preprocess data. This is the main method.
+        Preprocess data. This is the main function.
         """
-        self._detect_setup()
-
         self._store_gt_distance()
         self._store_ts_data()
         self._store_time_intervals()
         self._interpolate_gt_to_uwb() 
 
-    def _detect_setup(self):
-        """
-        Detects the devices that recorded to the bag, and the tag IDs associated with each device.
-        """
-
-        # Get all topics in the ROS bag.
-        topics = self.bag_data.topics
-        
-        ###------- Generate a list of ranging devices -------###
-        all_devices = []
-        for topic in topics:
-            if topic[-5:] == "range":
-                device = topic.split('uwb/range')[0]
-                all_devices.append(device)
-
-        ###------- Get the tag(s) attached to each device -------###
-        self.device_tags = {device:[] for device in all_devices}
-        for device in all_devices:
-            # Get the ranging data associated with this device
-            topic = device + 'uwb/range'
-            data = self.bag_data.message_by_topic(topic)
-            data_pd = pd.read_csv(data)
-
-            # Find all the tags that initiated while connected to this device
-            id = data_pd['from_id']
-            self.device_tags[device] = list(set(id))
-
     def _store_gt_distance(self):
         """
         Stores the history of ground truth distance per pair.
         """
-        t_sec, t_nsec, r, q = self._extract_gt_data()
+        t_sec, t_nsec, r, rot = self._extract_gt_data()
         
         # Store ground-truth position of every tag
         self.r = r
+        self.rot = rot
 
-        for tag in t_sec:
+        for machine in t_sec:
             # Unwrap the clock
-            t_nsec[tag] = self._unwrap_gt(t_sec[tag], t_nsec[tag], 1e9)
-
-            # Store ground truth rotation vector of every tag
-            self.phi.update({tag:q[tag].as_rotvec()})
+            t_nsec[machine] = self._unwrap_gt(t_sec[machine], t_nsec[machine], 1e9)
         
         # Store the ground-truth distance between pairs 
-        self._gt_distance = self._calculate_gt_distance(t_nsec, r)
+        self._gt_distance = self._calculate_gt_distance(t_nsec)
 
     def _extract_gt_data(self):
         """
@@ -127,37 +99,35 @@ class PostProcess(object):
         """
 
         # Setting up the storage variables as dicts
-        t_sec = {lv0:np.empty(0) for lv0 in self.tag_ids}
-        t_nsec = {lv0:np.empty(0) for lv0 in self.tag_ids}
-        r = {lv0:np.empty(0) for lv0 in self.tag_ids}
-        q = {lv0:[] for lv0 in self.tag_ids}
+        t_sec = {lv0:np.empty(0) for lv0 in self.tag_ids.keys()}
+        t_nsec = {lv0:np.empty(0) for lv0 in self.tag_ids.keys()}
+        r = {lv0:np.empty(0) for lv0 in self.tag_ids.keys()}
+        rot = {lv0:[] for lv0 in self.tag_ids.keys()}
 
         # Iterating tag by tag. 
-        for lv0 in range(len(self.tag_ids)): 
+        for machine in self.tag_ids: 
+            # TODO: needs a big overhaul. We now have pose of drone not module, and a moment arm to module.
             # Extracting the data streamed through VRPN.
-            topic = '/vrpn_client_node/tripod' + str(lv0+1) + '/pose'
+            topic = '/'+machine+'/vrpn_client_node/'+machine+'/pose'
             data = self.bag_data.message_by_topic(topic)
             data_pd = pd.read_csv(data)
 
-            # Tag ID.
-            id = self.tag_ids[lv0]
-
             # Timestamps.
-            t_sec[id] = np.array(data_pd['header.stamp.secs'])
-            t_nsec[id] = np.array(data_pd['header.stamp.nsecs'])
+            t_sec[machine] = np.array(data_pd['header.stamp.secs'])
+            t_nsec[machine] = np.array(data_pd['header.stamp.nsecs'])
             
             # Pose.
-            r[id] = np.array((data_pd['pose.position.x'],
+            r[machine] = np.array((data_pd['pose.position.x'],
                                data_pd['pose.position.y'],
                                data_pd['pose.position.z']))
-            q[id] = R.from_quat(np.array([data_pd['pose.orientation.x'],
+            rot[machine] = R.from_quat(np.array([data_pd['pose.orientation.x'],
                                            data_pd['pose.orientation.y'], 
                                            data_pd['pose.orientation.z'], 
                                            data_pd['pose.orientation.w']]).T)
 
-        return t_sec, t_nsec, r, q
+        return t_sec, t_nsec, r, rot
 
-    def _calculate_gt_distance(self, t, r):
+    def _calculate_gt_distance(self, t):
         """
         Compute the ground-truth distance between pairs of tags from their ground-truth position.
 
@@ -174,19 +144,46 @@ class PostProcess(object):
             dict with the tag ID pairs as the keys. Contains computed ground-truth distances.
         """
         # All possible combinations of tags. Order does not matter.
-        tag_pairs = combinations(self.tag_ids,2)
+        tags = sum(list(self.tag_ids.values()),[])
+            
+        tag_pairs_all = combinations(tags,2)
+        if self.ranging_with_self:
+            self.tag_pairs_set = tag_pairs_all
+        else:
+            self.tag_pairs_set = [i for i in tag_pairs_all if [i[0],i[1]] not in self.tag_ids.values()]
 
-        gt = {(i,j):{"t":[],"dist":[]} for (i,j) in tag_pairs}
+        gt = {(i,j):{"t":[],"dist":[]} for (i,j) in self.tag_pairs_set}
         for pair in gt:
             i = pair[0]
             j = pair[1]
+            machine_i = [x for x in self.tag_ids.keys() if i in self.tag_ids[x]][0]
+            machine_j = [x for x in self.tag_ids.keys() if j in self.tag_ids[x]][0]
 
             # Interpolate the measurements of Tag j to the timestamps of Tag i.
-            r_j_interp = self._interpolate_position(r[j], t[j], t[i])
+            r_j_interp = self._interpolate(self.r[machine_j], t[machine_j], t[machine_i])
+            q_j_interp = self._interpolate(self.rot[machine_j].as_quat().T, t[machine_j], t[machine_i]).T
+            rot_j_interp = R.from_quat(np.array([q_j_interp[:,0],
+                                                 q_j_interp[:,1], 
+                                                 q_j_interp[:,2], 
+                                                 q_j_interp[:,3]]).T)
+            gt[pair]["t"] = t[machine_i]
+
+            # Find moment arms
+            idx_i = self.tag_ids[machine_i].index(i)
+            idx_j = self.tag_ids[machine_j].index(j)
+            arm_i = self.moment_arms[machine_i][idx_i]
+            arm_j = self.moment_arms[machine_j][idx_j]
 
             # Compute the distance between the tags.
-            gt[pair]["t"] = t[i]
-            gt[pair]["dist"] = np.linalg.norm(r[i] - r_j_interp, axis=0)
+            num_of_meas = t[machine_i].size
+            gt[pair]["dist"] = np.zeros(num_of_meas,)
+            C_ai = self.rot[machine_i].as_dcm()
+            C_aj = rot_j_interp.as_dcm()
+            for k in range(num_of_meas):
+                gt[pair]["dist"][k] = np.linalg.norm(C_ai[k] @ arm_i
+                                                     + self.r[machine_i][:,k]
+                                                     - r_j_interp[:,k]
+                                                     - C_aj[k] @ arm_j)
 
         return gt
 
@@ -212,9 +209,9 @@ class PostProcess(object):
         ts_data = {}
 
         # Iterating device by device.
-        for device in self.device_tags:
+        for machine in self.tag_ids.keys():
             # Extracting the data recorded by the device.
-            topic = device + 'uwb/range'
+            topic = '/' + machine + '/uwb/range'
             data = self.bag_data.message_by_topic(topic)
             data_pd = pd.read_csv(data)
 
@@ -225,6 +222,16 @@ class PostProcess(object):
 
                 initiator_id = row["from_id"]
                 target_id = row["to_id"]
+                pair = (initiator_id, target_id)
+
+                # Ignore unexpected measurements
+                if (pair not in self.tag_pairs_set) and (pair[::-1] not in self.tag_pairs_set):
+                    continue
+
+                # Ignore measurement-at-target
+                if (initiator_id not in self.tag_ids[machine]):
+                    continue
+
                 temp = np.array([row["header.stamp.nsecs"],
                                  row["range"],
                                  row["tx1"]*self._to_ns,
@@ -237,11 +244,10 @@ class PostProcess(object):
                                  row["power2"]])
 
                 # Initialize this pair if not already part of the dict
-                if (initiator_id, target_id) not in ts_data:
-                    ts_data[(initiator_id,target_id)] = np.empty((0,10))
+                if pair not in ts_data:
+                    ts_data[pair] = np.empty((0,10))
 
-                ts_data[(initiator_id,target_id)] = \
-                            np.vstack((ts_data[(initiator_id,target_id)], temp))
+                ts_data[pair] = np.vstack((ts_data[pair], temp))
 
         # TODO: should make ts_data of the same form as time_intervals (i.e., a nested dict)
         self.range_idx = 1
@@ -320,7 +326,7 @@ class PostProcess(object):
             self.time_intervals[pair].update({'r_gt': f(t_new)})
 
     @staticmethod
-    def _interpolate_position(r, t_old, t_new):
+    def _interpolate(x, t_old, t_new):
         """
         Interpolate ground truth position.
 
@@ -339,7 +345,7 @@ class PostProcess(object):
             Recorded ground-truth position interpolated at t_new.
         """
         
-        f = interp1d(t_old, r, kind='linear', fill_value='extrapolate')
+        f = interp1d(t_old, x, kind='linear', fill_value='extrapolate')
 
         return f(t_new)
     ### ------------------------------------------------------------------------ ###

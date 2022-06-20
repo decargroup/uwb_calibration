@@ -1,5 +1,4 @@
 # %%
-from sklearn.datasets import make_hastie_10_2
 from pyuwbcalib.uwbcalibrate import UwbCalibrate
 from pyuwbcalib.postprocess import PostProcess
 import matplotlib
@@ -10,10 +9,16 @@ matplotlib.use('Qt5Agg')
 
 sns.set_theme()
 
-tag_ids=[4,1,3] # in the order of tripod1, tripod2, tripod3
-raw_obj = PostProcess(file_path="datasets/2022_05_02/ros_bags/test1.bag",
-                      num_meas=-1,
-                      tag_ids=tag_ids)
+tag_ids={'ifo001': [1,2],
+         'ifo002': [3,4],
+         'ifo003': [5,6]}
+moment_arms={'ifo001': [[0.17,-0.17,-0.03], [-0.17,0.17,-0.03]],
+             'ifo002': [[0.17,-0.17,-0.03], [-0.17,0.17,-0.03]],
+             'ifo003': [[0.17,-0.17,-0.03], [-0.17,0.17,-0.03]]}
+raw_obj = PostProcess("datasets/2022_06_15/bias_calibration/merged.bag",
+                      tag_ids,
+                      moment_arms,
+                      num_meas=-1)
 
 
 plt.show(block=True)
@@ -22,8 +27,8 @@ plt.show(block=True)
 kf = False
 power_calib = True
 antenna_delay = True
-initiator_id = 4
-target_id = 1
+initiator_id = 1
+target_id = 3
 pair = (initiator_id, target_id)
 raw_obj.visualize_raw_data(pair=(initiator_id,target_id))
 
