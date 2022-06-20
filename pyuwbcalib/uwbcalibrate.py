@@ -404,7 +404,10 @@ class UwbCalibrate(object):
         strides = a.strides + (a.strides[-1],)
         return np.lib.stride_tricks.as_strided(a, shape=shape, strides=strides)
 
-    def _reject_outliers(self, bias, lifted_pr, std_window, chi_thresh):
+    def _reject_outliers(self, bias, lifted_pr, std_window, chi_thresh, axs):
+        '''
+        keep fitting models and rejecting outliers until no more outliers
+        '''
         outlier_bias = np.empty(0,)
         outlier_lifted_pr = np.empty(0,)
         while True:
@@ -429,10 +432,11 @@ class UwbCalibrate(object):
             else:
                 break
 
-        fig, axs = plt.subplots(1)
-
+        # PLOTTING
         axs.scatter(lifted_pr, bias)
         axs.scatter(outlier_lifted_pr, outlier_bias)
+        axs.set_xlabel(r"$f(P_r)$")
+        axs.set_ylabel(r"Bias [m]")
 
         return spl, std_spl, bias, lifted_pr
 
@@ -440,6 +444,8 @@ class UwbCalibrate(object):
         num_pairs = len(self.ts_data)
         fig, axs = plt.subplots(3,num_pairs)
         fig2, axs2 = plt.subplots(1) 
+        fig3, axs3 = plt.subplots(num_pairs) 
+        fig3.suptitle(r"Outlier rejection")
 
         self.mean_spline = {pair:[] for pair in self.ts_data}
 
@@ -462,12 +468,12 @@ class UwbCalibrate(object):
             r_gt = r_gt_unsorted[sort_pr]
 
             spl, std_spl, bias_trunc, lifted_pr_trunc \
-                        = self._reject_outliers(bias, lifted_pr, std_window, chi_thresh)
+                        = self._reject_outliers(bias, lifted_pr, std_window, chi_thresh, axs3[lv0])
             self.mean_spline[pair] = spl
             bias_std = std_spl(lifted_pr)
             bias_fit = spl(lifted_pr)
 
-            # PLOTTING
+            ### PLOT 1 ###
             axs[0,lv0].scatter(lifted_pr_trunc, bias_trunc, label=r"Raw data", linestyle="dotted", s=1)
             axs[0,lv0].plot(lifted_pr, bias_fit, label=r"Fit")
             axs[0,lv0].fill_between(
@@ -482,16 +488,20 @@ class UwbCalibrate(object):
 
             ## Visualize std vs. Power
             axs[1,lv0].plot(lifted_pr, bias_std)
-            axs[1,lv0].set_xlabel("$f(P_r)$")
-            axs[1,lv0].set_ylabel("Bias std [m]")
+            axs[1,lv0].set_xlabel(r"$f(P_r)$")
+            axs[1,lv0].set_ylabel(r"Bias std [m]")
 
             ## Visualize std vs. distance
             axs[2,lv0].scatter(r_gt, bias_std, s=1)
-            axs[2,lv0].set_xlabel("Ground truth distance [m]")
-            axs[2,lv0].set_ylabel("Bias std [m]")
+            axs[2,lv0].set_xlabel(r"Ground truth distance [m]")
+            axs[2,lv0].set_ylabel(r"Bias std [m]")
 
-            ## Separate plot with all splines
-            axs2.plot(lifted_pr, bias_fit)
+            ### PLOT 2 ### Plot with all splines
+            axs2.plot(lifted_pr, bias_fit, label=r"Pair "+str(pair))
+            axs2.legend()
+            axs2.set_xlabel(r"$f(P_r)$")
+            axs2.set_ylabel(r"Bias [m]")
+            fig2.suptitle(r"Bias-Power Fit")
 
         axs[0,-1].legend()
 
