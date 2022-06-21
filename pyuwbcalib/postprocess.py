@@ -233,6 +233,7 @@ class PostProcess(object):
                     continue
 
                 temp = np.array([row["header.stamp.nsecs"],
+                                 row["header.stamp.secs"],
                                  row["range"],
                                  row["tx1"]*self._to_ns,
                                  row["rx1"]*self._to_ns,
@@ -245,20 +246,20 @@ class PostProcess(object):
 
                 # Initialize this pair if not already part of the dict
                 if pair not in ts_data:
-                    ts_data[pair] = np.empty((0,10))
+                    ts_data[pair] = np.empty((0,11))
 
                 ts_data[pair] = np.vstack((ts_data[pair], temp))
 
         # TODO: should make ts_data of the same form as time_intervals (i.e., a nested dict)
-        self.range_idx = 1
-        self.tx1_idx = 2
-        self.rx1_idx = 3
-        self.tx2_idx = 4
-        self.rx2_idx = 5
-        self.tx3_idx = 6
-        self.rx3_idx = 7
-        self.Pr1_idx = 8
-        self.Pr2_idx = 9
+        self.range_idx = 2
+        self.tx1_idx = 3
+        self.rx1_idx = 4
+        self.tx2_idx = 5
+        self.rx2_idx = 6
+        self.tx3_idx = 7
+        self.rx3_idx = 8
+        self.Pr1_idx = 9
+        self.Pr2_idx = 10
 
         self.tag_pairs = list(ts_data.keys())
 
@@ -394,7 +395,7 @@ class PostProcess(object):
 
             # Individual unwraps
             self.ts_data[pair][:,0] \
-                = self._unwrap(self.ts_data[pair][:,0], 1e9)
+                = self._unwrap_gt(self.ts_data[pair][:,1], self.ts_data[pair][:,0], 1e9)
             
             self.ts_data[pair][:,self.tx1_idx] \
                 = self._unwrap(self.ts_data[pair][:,self.tx1_idx], max_time_ns)
@@ -487,8 +488,8 @@ class PostProcess(object):
         fig, axs = plt.subplots(1)
 
         axs.plot(self.time_intervals[pair]["t"]/1e9, range, label='Range Measurements')
-        axs.scatter(self._gt_distance[pair]["t"]/1e9, 
-                    self._gt_distance[pair]["dist"], 
+        axs.scatter(self.time_intervals[pair]["t"]/1e9, 
+                    self.time_intervals[pair]["r_gt"], 
                     s=1,
                     label='Ground Truth')
         

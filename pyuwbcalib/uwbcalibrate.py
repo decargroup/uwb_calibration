@@ -52,15 +52,15 @@ class UwbCalibrate(object):
             self.ts_data = processed_data.ts_data
             self.time_intervals = processed_data.time_intervals
 
-        self.range_idx = 1
-        self.tx1_idx = 2
-        self.rx1_idx = 3
-        self.tx2_idx = 4
-        self.rx2_idx = 5
-        self.tx3_idx = 6
-        self.rx3_idx = 7
-        self.Pr1_idx = 8
-        self.Pr2_idx = 9
+        self.range_idx = 2
+        self.tx1_idx = 3
+        self.rx1_idx = 4
+        self.tx2_idx = 5
+        self.rx2_idx = 6
+        self.tx3_idx = 7
+        self.rx3_idx = 8
+        self.Pr1_idx = 9
+        self.Pr2_idx = 10
 
         self.lift = processed_data.lift
 
@@ -76,7 +76,7 @@ class UwbCalibrate(object):
         '''
         lower_idxs, upper_idxs = self._find_static_extremes(ts_data, time_intervals)
         
-        num_columns = 10
+        num_columns = 11
         num_rows = lambda pair: upper_idxs[pair] - lower_idxs[pair] 
         ts_data_trunc = {pair:np.zeros((num_rows(pair), num_columns)) for \
                                                                 pair in ts_data}
@@ -435,17 +435,22 @@ class UwbCalibrate(object):
 
         return spl, std_spl, bias, lifted_pr
 
-    def fit_model(self, std_window=50, chi_thresh=10.8):
+    def fit_model(self, std_window=50, chi_thresh=10.8, merge_pairs=False):
         num_pairs = len(self.ts_data)
-        fig, axs = plt.subplots(3,num_pairs,sharey='row')
+        # fig, axs = plt.subplots(3,num_pairs,sharey='row')
+        fig, axs = plt.subplots(2,num_pairs,sharey='row')
         fig2, axs2 = plt.subplots(1) 
         fig3, axs3 = plt.subplots(num_pairs,sharey='row') 
         fig3.suptitle(r"Outlier rejection")
         axs[0,0].set_ylabel(r"Bias [m]")
         axs[1,0].set_ylabel(r"Bias std [m]")
-        axs[2,0].set_ylabel(r"Bias std [m]")
+        # axs[2,0].set_ylabel(r"Bias std [m]")
 
-        self.mean_spline = {pair:[] for pair in self.ts_data}
+        if merge_pairs:
+            # self._merge_pairs() # TODO: Merge-pairs option!
+            pass
+
+        self.mean_spline = {pair:[] for pair in self.tag_pairs}
 
         for lv0, pair in enumerate(self.tag_pairs):
             range = self.compute_range_meas(pair)
@@ -487,9 +492,9 @@ class UwbCalibrate(object):
             axs[1,lv0].plot(lifted_pr, bias_std)
             axs[1,lv0].set_xlabel(r"$f(P_r)$")
             
-            ## Visualize std vs. distance
-            axs[2,lv0].scatter(r_gt, bias_std, s=1)
-            axs[2,lv0].set_xlabel(r"Ground truth distance [m]")
+            # ## Visualize std vs. distance
+            # axs[2,lv0].scatter(r_gt, bias_std, s=1)
+            # axs[2,lv0].set_xlabel(r"Ground truth distance [m]")
 
             ### PLOT 2 ### Plot with all splines
             axs2.plot(lifted_pr, bias_fit, label=r"Pair "+str(pair))

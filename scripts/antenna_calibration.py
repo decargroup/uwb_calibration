@@ -12,9 +12,9 @@ sns.set_theme()
 tag_ids={'ifo001': [1,2],
          'ifo002': [3,4],
          'ifo003': [5,6]}
-moment_arms={'ifo001': [[0.17,-0.17,-0.03], [-0.17,0.17,-0.03]],
-             'ifo002': [[0.17,-0.17,-0.03], [-0.17,0.17,-0.03]],
-             'ifo003': [[0.17,-0.17,-0.03], [-0.17,0.17,-0.03]]}
+moment_arms={'ifo001': [[0.15846,-0.16067,-0.07762], [-0.19711,0.14649,-0.082706]],
+             'ifo002': [[0.18620,-0.13653,-0.05268], [-0.16133,0.17290,-0.047776]],
+             'ifo003': [[0.18776,-0.16791,-0.08407], [-0.15605,0.14864,-0.079526]]}
 raw_obj = PostProcess("datasets/2022_06_15/bias_calibration/merged.bag",
                       tag_ids,
                       moment_arms,
@@ -27,8 +27,8 @@ raw_obj = PostProcess("datasets/2022_06_15/bias_calibration/merged.bag",
 kf = False
 power_calib = True
 antenna_delay = True
-initiator_id = 3
-target_id = 2
+initiator_id = 2
+target_id = 3
 pair = (initiator_id, target_id)
 raw_obj.visualize_raw_data(pair=(initiator_id,target_id))
 
