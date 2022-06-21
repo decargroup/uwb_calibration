@@ -21,14 +21,14 @@ raw_obj = PostProcess("datasets/2022_06_15/bias_calibration/merged.bag",
                       num_meas=-1)
 
 
-plt.show(block=True)
+# plt.show(block=True)
 
 # %%
 kf = False
 power_calib = True
 antenna_delay = True
-initiator_id = 1
-target_id = 3
+initiator_id = 3
+target_id = 2
 pair = (initiator_id, target_id)
 raw_obj.visualize_raw_data(pair=(initiator_id,target_id))
 
@@ -41,7 +41,7 @@ num_pairs = len(calib_obj.ts_data)
 meas_old = {pair:[] for pair in calib_obj.ts_data}
 for lv0, pair in enumerate(calib_obj.ts_data):
     meas_old[pair] = calib_obj.compute_range_meas(pair,
-                                                  visualize=True)
+                                                  visualize=False)
 
 plt.show(block=True)
 
@@ -65,7 +65,7 @@ if kf:
     plt.plot(t, calib_obj.time_intervals[pair]['r_gt'])
     ax.legend()
 
-    plt.show(block=True)
+    # plt.show(block=True)
 
 # %% Antenna delay: # TODO: Should we do power calibration first to remove outliers? 
                     # TODO: Alternatively, could do robust LS
@@ -74,12 +74,7 @@ if antenna_delay:
     delays = calib_obj.calibrate_antennas()
     print(delays)
 
-    id0 = tag_ids[0]
-    id1 = tag_ids[1]
-    id2 = tag_ids[2]
-    calib_obj.correct_antenna_delay(id0, delays[id0])
-    calib_obj.correct_antenna_delay(id1, delays[id1])
-    calib_obj.correct_antenna_delay(id2, delays[id2])
+    calib_obj.correct_antenna_delay(delays)
 
     meas_new = calib_obj.compute_range_meas(pair)
 
@@ -92,7 +87,7 @@ if antenna_delay:
     axs[0].set_ylim(0, 4)
     axs[0].plot(calib_obj.time_intervals[pair]["r_gt"], linewidth=3, label="GT")
     axs[0].plot(meas_old[pair], linewidth=1, label="Raw")
-    axs[0].plot(meas_new, linewidth=1, label="Calibrated")
+    axs[0].plot(meas_new, linewidth=1, label="Antenna-Delay Calibrated")
     axs[0].legend()
 
     axs[1].set_title("Error for pair " + str(pair))
@@ -100,14 +95,14 @@ if antenna_delay:
     axs[1].set_ylabel("Range Error [m]")
     axs[1].set_ylim(-0.4, 0.8)
     axs[1].plot(meas_old[pair] - calib_obj.time_intervals[pair]["r_gt"], linewidth=1, label="Raw")
-    axs[1].plot(meas_new - calib_obj.time_intervals[pair]["r_gt"], linewidth=1, label="Calibrated")
+    axs[1].plot(meas_new - calib_obj.time_intervals[pair]["r_gt"], linewidth=1, label="Antenna-Delay Calibrated")
     axs[1].legend()
 
     # %%
 
 # %% Power calibration
 if power_calib:
-    calib_obj.fit_model(std_window=250, chi_thresh=10.8*1.25)
+    calib_obj.fit_model(std_window=50, chi_thresh=10.8)
 
 # %% Final plotting
 num_pairs = len(calib_obj.ts_data)
@@ -132,12 +127,13 @@ for lv0, pair in enumerate(calib_obj.tag_pairs):
     axs[lv0].set_xlabel("Measurement Number")
     axs[lv0].set_ylim([-0.35, 0.6])
 
-    print(np.mean(meas_old[pair]-gt))
-    print(np.mean(meas-gt))
-    print(np.mean(meas_calibrated-gt))
-    print(np.std(meas_old[pair]-gt))
-    print(np.std(meas-gt))
-    print(np.std(meas_calibrated-gt))
+    print("Raw Mean: "+ str(np.mean(meas_old[pair]-gt)))
+    print("Antenna-Calibrated Mean: " + str(np.mean(meas-gt)))
+    print("Fully-Calibrated Mean: " + str(np.mean(meas_calibrated-gt)))
+    print("Raw Std: "+ str(np.std(meas_old[pair]-gt)))
+    print("Antenna-Calibrated Std: " + str(np.std(meas-gt)))
+    print("Fully-Calibrated Std: " + str(np.std(meas_calibrated-gt)))
+    print("---------------------------------------------------------------")
 
 axs[0].legend()
 plt.show(block=True)
