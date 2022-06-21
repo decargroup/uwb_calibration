@@ -165,7 +165,7 @@ class UwbCalibrate(object):
         return lower_idxs, upper_idxs
  
 
-    def _calculate_skew_gain(self, initiating_idx, target_idx):
+    def _calculate_skew_gain(self, pair):
         """
         Calculates the K parameter given by Ra2/Db2.
         Gain set to 1 if twr_type == 0.
@@ -181,10 +181,6 @@ class UwbCalibrate(object):
         --------
         np.array: The K values for all the measurements.
         """
-        initiating_id = self.tag_ids[initiating_idx]
-        target_id = self.tag_ids[target_idx]
-        pair = (initiating_id, target_id)
-
         Ra2 = self.time_intervals[pair]["Ra2"]
         Db2 = self.time_intervals[pair]["Db2"]
 
@@ -193,7 +189,7 @@ class UwbCalibrate(object):
         else:
             return Ra2 / Ra2
 
-    def _setup_A_matrix(self, K, initiating_idx, target_idx):
+    def _setup_A_matrix(self, pair, tags, K):
         """
         Calculates the A matrix for the linear least-squares problem.
 
@@ -210,14 +206,17 @@ class UwbCalibrate(object):
         --------
         2D np.array: The A matrix.
         """
+        initiating_idx = tags.index(pair[0])
+        target_idx = tags.index(pair[1]) 
+
         n = len(K)
-        A = np.zeros((n, 3))
+        A = np.zeros((n, len(tags)))
         A[:, initiating_idx] += 0.5
         A[:, target_idx] = 0.5 * K
 
         return A
 
-    def _setup_b_vector(self, K, initiating_idx, target_idx):
+    def _setup_b_vector(self, pair, K):
         """
         Calculates the b vector for the linear least-squares problem.
 
@@ -234,10 +233,6 @@ class UwbCalibrate(object):
         --------
         np.array: The b vector.
         """
-        initiating_id = self.tag_ids[initiating_idx]
-        target_id = self.tag_ids[target_idx]
-        pair = (initiating_id, target_id)
-
         gt = self.time_intervals[pair]["r_gt"]
         Ra1 = self.time_intervals[pair]["Ra1"]
         Db1 = self.time_intervals[pair]["Db1"]
@@ -442,10 +437,13 @@ class UwbCalibrate(object):
 
     def fit_model(self, std_window=50, chi_thresh=10.8):
         num_pairs = len(self.ts_data)
-        fig, axs = plt.subplots(3,num_pairs)
+        fig, axs = plt.subplots(3,num_pairs,sharey='row')
         fig2, axs2 = plt.subplots(1) 
-        fig3, axs3 = plt.subplots(num_pairs) 
+        fig3, axs3 = plt.subplots(num_pairs,sharey='row') 
         fig3.suptitle(r"Outlier rejection")
+        axs[0,0].set_ylabel(r"Bias [m]")
+        axs[1,0].set_ylabel(r"Bias std [m]")
+        axs[2,0].set_ylabel(r"Bias std [m]")
 
         self.mean_spline = {pair:[] for pair in self.ts_data}
 
@@ -484,17 +482,14 @@ class UwbCalibrate(object):
                 label=r"95% confidence interval",
             )
             axs[0,lv0].set_xlabel(r"$f(P_r)$")
-            axs[0,lv0].set_ylabel(r"Bias [m]")
-
+            
             ## Visualize std vs. Power
             axs[1,lv0].plot(lifted_pr, bias_std)
             axs[1,lv0].set_xlabel(r"$f(P_r)$")
-            axs[1,lv0].set_ylabel(r"Bias std [m]")
-
+            
             ## Visualize std vs. distance
             axs[2,lv0].scatter(r_gt, bias_std, s=1)
             axs[2,lv0].set_xlabel(r"Ground truth distance [m]")
-            axs[2,lv0].set_ylabel(r"Bias std [m]")
 
             ### PLOT 2 ### Plot with all splines
             axs2.plot(lifted_pr, bias_fit, label=r"Pair "+str(pair))
@@ -515,20 +510,14 @@ class UwbCalibrate(object):
             Module i: (float)
                 Antenna delay for tag i
         """
-        K1 = self._calculate_skew_gain(0, 1)
-        A1 = self._setup_A_matrix(K1, 0, 1)
-        b1 = self._setup_b_vector(K1, 0, 1)
+        tags = sum(list(self.tag_ids.values()),[])
 
-        K2 = self._calculate_skew_gain(0, 2)
-        A2 = self._setup_A_matrix(K2, 0, 2)
-        b2 = self._setup_b_vector(K2, 0, 2)
-
-        K3 = self._calculate_skew_gain(1, 2)
-        A3 = self._setup_A_matrix(K3, 1, 2)
-        b3 = self._setup_b_vector(K3, 1, 2)
-
-        A = np.vstack((A1, A2, A3))
-        b = np.vstack((b1, b2, b3))
+        A = np.zeros((0,len(tags)))
+        b = np.zeros((0,1))
+        for pair in self.tag_pairs:
+            K = self._calculate_skew_gain(pair)
+            A = np.vstack((A, self._setup_A_matrix(pair, tags, K)))
+            b = np.vstack((b, self._setup_b_vector(pair, K)))
 
         nan_idx = ~np.isnan(b)
         nan_idx = nan_idx.flatten()
@@ -539,15 +528,11 @@ class UwbCalibrate(object):
         x = x.flatten()
 
         print(np.linalg.norm(b))
-        print(np.linalg.norm(b - A * np.array([x[0], x[1], x[2]])))
+        print(np.linalg.norm(b.T - A @ x))
 
-        return {
-            self.tag_ids[0]: x[0],
-            self.tag_ids[1]: x[1],
-            self.tag_ids[2]: x[2],
-        }
+        return {id: x[i] for i,id in enumerate(tags)}
 
-    def correct_antenna_delay(self, id, delay):
+    def correct_antenna_delay(self, delays_dict):
         """
         Modifies the data of this object to correct for the antenna delay of a
         specific module.
@@ -562,13 +547,15 @@ class UwbCalibrate(object):
         TODO: What about D1 and D2? This seems to be a problem.
               We might have to calibrate for TX and RX delays separately
               if we are to proceed with Kalman filtering with this architecture.
-        TODO: tof1, tof2, and tof3 as well, once individual delays are take into consideration.
+        TODO: tof1, tof2, and tof3 as well, once individual delays are taken into consideration.
         """
-        for key in self.time_intervals:
-            if key[0] == id:
-                self.time_intervals[key]["Ra1"] += delay
-            elif key[1] == id:
-                self.time_intervals[key]["Db1"] -= delay
+        for id in delays_dict.keys():
+            delay = delays_dict[id]
+            for pair in self.time_intervals:
+                if pair[0] == id:
+                    self.time_intervals[pair]["Ra1"] += delay
+                elif pair[1] == id:
+                    self.time_intervals[pair]["Db1"] -= delay
 
     def compute_range_meas(self, pair=(1,2), visualize=False, owr = False):
         # TODO: Inherit this function from PostProcess?

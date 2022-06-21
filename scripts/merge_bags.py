@@ -1,7 +1,7 @@
 import os
 import rosbag
 
-directory_path = 'datasets/2022_06_15/simple_sorta_los/'
+directory_path = 'datasets/2022_06_15/bias_calibration/'
 
 new_bag = rosbag.Bag(directory_path+"merged.bag", 'w')
 

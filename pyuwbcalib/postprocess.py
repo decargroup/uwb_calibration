@@ -324,7 +324,14 @@ class PostProcess(object):
             f = interp1d(t_old, r, kind='linear', fill_value='extrapolate')
 
             self.time_intervals[pair].update({'r_gt': f(t_new)})
-
+            
+            # try:
+            #     self._gt_distance[pair]['t'] = t_new
+            #     self._gt_distance[pair]['dist'] = f(t_new)
+            # except:
+            #     self._gt_distance[pair[::-1]]['t'] = t_new
+            #     self._gt_distance[pair[::-1]]['dist'] = f(t_new)
+            
     @staticmethod
     def _interpolate(x, t_old, t_new):
         """
@@ -362,18 +369,28 @@ class PostProcess(object):
 
         ### --- Unwrap time-stamps --- ###
         for pair in self.tag_pairs: 
+            iter_rx2 = 0
+            iter_tx2 = 0
+            iter_tx3 = 0
+            iter_rx3 = 0
             # Check if a clock wrap occured at the first measurement, and unwrap
             if self.ts_data[pair][:,self.rx2_idx][0] < self.ts_data[pair][:,self.tx1_idx][0]:
                 self.ts_data[pair][:,self.rx2_idx][0] + max_time_ns
+                iter_rx2 = 1
+                iter_rx3 = 1
 
             if self.ts_data[pair][:,self.tx2_idx][0] < self.ts_data[pair][:,self.rx1_idx][0]:
                 self.ts_data[pair][:,self.tx2_idx][0] + max_time_ns
+                iter_tx2 = 1
+                iter_tx3 = 1
 
             if self.ts_data[pair][:,self.tx3_idx][0] < self.ts_data[pair][:,self.tx2_idx][0]:
                 self.ts_data[pair][:,self.tx3_idx][0] + max_time_ns
+                iter_tx3 = 1
 
             if self.ts_data[pair][:,self.rx3_idx][0] < self.ts_data[pair][:,self.rx2_idx][0]:
                 self.ts_data[pair][:,self.rx3_idx][0] + max_time_ns
+                iter_rx3 = 1
 
             # Individual unwraps
             self.ts_data[pair][:,0] \
@@ -386,19 +403,19 @@ class PostProcess(object):
                 = self._unwrap(self.ts_data[pair][:,self.rx1_idx], max_time_ns)
 
             self.ts_data[pair][:,self.tx2_idx] \
-                = self._unwrap(self.ts_data[pair][:,self.tx2_idx], max_time_ns)
+                = self._unwrap(self.ts_data[pair][:,self.tx2_idx], max_time_ns, iter=iter_tx2)
 
             self.ts_data[pair][:,self.rx2_idx] \
-                = self._unwrap(self.ts_data[pair][:,self.rx2_idx], max_time_ns)
+                = self._unwrap(self.ts_data[pair][:,self.rx2_idx], max_time_ns, iter=iter_rx2)
 
             self.ts_data[pair][:,self.tx3_idx] \
-                = self._unwrap(self.ts_data[pair][:,self.tx3_idx], max_time_ns)
+                = self._unwrap(self.ts_data[pair][:,self.tx3_idx], max_time_ns, iter=iter_tx3)
 
             self.ts_data[pair][:,self.rx3_idx] \
-                = self._unwrap(self.ts_data[pair][:,self.rx3_idx], max_time_ns)
+                = self._unwrap(self.ts_data[pair][:,self.rx3_idx], max_time_ns, iter=iter_rx3)
 
     @staticmethod
-    def _unwrap(data, max):
+    def _unwrap(data, max, iter=0):
         """
         Unwraps data. 
 
@@ -417,7 +434,7 @@ class PostProcess(object):
         temp = data[1:] - data[:-1]
         idx = np.concatenate([np.array([0]), temp < 0])
 
-        iter = 0
+        # iter = 0
         for lv0, _ in enumerate(data):
             if idx[lv0]:
                 iter += 1
@@ -497,8 +514,8 @@ class PostProcess(object):
         fig, axs = plt.subplots(1)
 
         axs.plot(self.time_intervals[pair]["t"]/1e9, range, label='Range Measurements')
-        axs.scatter(self._gt_distance[pair]["t"]/1e9, \
-                    self._gt_distance[pair]["dist"], s=1, \
+        axs.scatter(self.time_intervals[pair]["t"]/1e9, \
+                    self.time_intervals[pair]["r_gt"], s=1, \
                     label='Ground Truth', color='r')
 
         axs.set_ylabel("Distance [m]")

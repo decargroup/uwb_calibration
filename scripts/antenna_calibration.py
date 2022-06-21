@@ -27,8 +27,8 @@ raw_obj = PostProcess("datasets/2022_06_15/bias_calibration/merged.bag",
 kf = False
 power_calib = True
 antenna_delay = True
-initiator_id = 1
-target_id = 3
+initiator_id = 3
+target_id = 2
 pair = (initiator_id, target_id)
 raw_obj.visualize_raw_data(pair=(initiator_id,target_id))
 
@@ -41,7 +41,7 @@ num_pairs = len(calib_obj.ts_data)
 meas_old = {pair:[] for pair in calib_obj.ts_data}
 for lv0, pair in enumerate(calib_obj.ts_data):
     meas_old[pair] = calib_obj.compute_range_meas(pair,
-                                                  visualize=True)
+                                                  visualize=False)
 
 plt.show(block=True)
 
@@ -74,12 +74,7 @@ if antenna_delay:
     delays = calib_obj.calibrate_antennas()
     print(delays)
 
-    id0 = tag_ids[0]
-    id1 = tag_ids[1]
-    id2 = tag_ids[2]
-    calib_obj.correct_antenna_delay(id0, delays[id0])
-    calib_obj.correct_antenna_delay(id1, delays[id1])
-    calib_obj.correct_antenna_delay(id2, delays[id2])
+    calib_obj.correct_antenna_delay(delays)
 
     meas_new = calib_obj.compute_range_meas(pair)
 
@@ -107,7 +102,7 @@ if antenna_delay:
 
 # %% Power calibration
 if power_calib:
-    calib_obj.fit_model(std_window=250, chi_thresh=10.8*1.25)
+    calib_obj.fit_model(std_window=50, chi_thresh=10.8)
 
 # %% Final plotting
 num_pairs = len(calib_obj.ts_data)
