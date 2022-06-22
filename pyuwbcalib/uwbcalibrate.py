@@ -436,28 +436,42 @@ class UwbCalibrate(object):
         return spl, std_spl, bias, lifted_pr
 
     def fit_model(self, std_window=50, chi_thresh=10.8, merge_pairs=False):
-        num_pairs = len(self.ts_data)
+        
+        if merge_pairs:
+            sorted_pairs = [tuple(sorted(i)) for i in self.tag_pairs]
+            addressed_pairs = list(set(sorted_pairs))
+            for i, pair in enumerate(addressed_pairs):
+                if pair not in self.tag_pairs:
+                    addressed_pairs[i] = pair[::-1]
+        else:
+            addressed_pairs = self.tag_pairs
+
+        num_pairs = len(addressed_pairs)
         # fig, axs = plt.subplots(3,num_pairs,sharey='row')
-        fig, axs = plt.subplots(2,num_pairs,sharey='row')
-        fig2, axs2 = plt.subplots(1) 
+        fig, axs = plt.subplots(1,num_pairs,sharey='row')
+        fig2, axs2 = plt.subplots(2,1) 
         fig3, axs3 = plt.subplots(num_pairs,sharey='row') 
         fig3.suptitle(r"Outlier rejection")
-        axs[0,0].set_ylabel(r"Bias [m]")
-        axs[1,0].set_ylabel(r"Bias std [m]")
-        # axs[2,0].set_ylabel(r"Bias std [m]")
+        axs[0].set_ylabel(r"Bias [m]")
 
-        if merge_pairs:
-            # self._merge_pairs() # TODO: Merge-pairs option!
-            pass
+        self.mean_spline = {pair:[] for pair in addressed_pairs}
 
-        self.mean_spline = {pair:[] for pair in self.tag_pairs}
-
-        for lv0, pair in enumerate(self.tag_pairs):
+        for lv0, pair in enumerate(addressed_pairs):
             range = self.compute_range_meas(pair)
             bias = range - self.time_intervals[pair]["r_gt"]
             lifted_pr = self.lift(0.5*self.ts_data[pair][:,self.Pr1_idx] \
                                   + 0.5*self.ts_data[pair][:,self.Pr2_idx])
             r_gt_unsorted = self.time_intervals[pair]["r_gt"]
+
+            if merge_pairs and pair[::-1] in self.tag_pairs:
+                opposite_pair = pair[::-1]
+                range_new = self.compute_range_meas(opposite_pair)
+                range = np.append(range, range_new)
+                bias = np.append(bias, range_new - self.time_intervals[opposite_pair]["r_gt"])
+                lifted_pr = np.append(lifted_pr, 
+                                      self.lift(0.5*self.ts_data[opposite_pair][:,self.Pr1_idx] \
+                                        + 0.5*self.ts_data[opposite_pair][:,self.Pr2_idx]))
+                r_gt_unsorted = np.append(r_gt_unsorted, self.time_intervals[opposite_pair]["r_gt"])
 
             pr_thresh = 2
             bias = bias[lifted_pr < pr_thresh]
@@ -477,33 +491,34 @@ class UwbCalibrate(object):
             bias_fit = spl(lifted_pr)
 
             ### PLOT 1 ###
-            axs[0,lv0].scatter(lifted_pr_trunc, bias_trunc, label=r"Raw data", linestyle="dotted", s=1)
-            axs[0,lv0].plot(lifted_pr, bias_fit, label=r"Fit")
-            axs[0,lv0].fill_between(
+            axs[lv0].scatter(lifted_pr_trunc, bias_trunc, label=r"Raw data", linestyle="dotted", s=1)
+            axs[lv0].plot(lifted_pr, bias_fit, label=r"Fit")
+            axs[lv0].fill_between(
                 lifted_pr.ravel(),
-                bias_fit - 1.96 * bias_std,
-                bias_fit + 1.96 * bias_std,
+                bias_fit - 3 * bias_std,
+                bias_fit + 3 * bias_std,
                 alpha=0.5,
-                label=r"95% confidence interval",
+                label=r"99.97% confidence interval",
             )
-            axs[0,lv0].set_xlabel(r"$f(P_r)$")
-            
-            ## Visualize std vs. Power
-            axs[1,lv0].plot(lifted_pr, bias_std)
-            axs[1,lv0].set_xlabel(r"$f(P_r)$")
+            axs[lv0].set_xlabel(r"$f(P_r)$")
             
             # ## Visualize std vs. distance
             # axs[2,lv0].scatter(r_gt, bias_std, s=1)
             # axs[2,lv0].set_xlabel(r"Ground truth distance [m]")
 
             ### PLOT 2 ### Plot with all splines
-            axs2.plot(lifted_pr, bias_fit, label=r"Pair "+str(pair))
-            axs2.legend()
-            axs2.set_xlabel(r"$f(P_r)$")
-            axs2.set_ylabel(r"Bias [m]")
+            axs2[0].plot(lifted_pr, bias_fit, label=r"Pair "+str(pair))
+            axs2[0].legend()
+            axs2[0].set_xlabel(r"$f(P_r)$")
+            axs2[0].set_ylabel(r"Bias [m]")
             fig2.suptitle(r"Bias-Power Fit")
 
-        axs[0,-1].legend()
+            axs2[1].plot(lifted_pr, bias_std, label=r"Pair "+str(pair))
+            axs2[1].legend()
+            axs2[1].set_xlabel(r"$f(P_r)$")
+            axs2[1].set_ylabel(r"Bias Std [m]")
+
+        axs[-1].legend()
 
     def calibrate_antennas(self):
         """

@@ -30,7 +30,7 @@ antenna_delay = True
 initiator_id = 2
 target_id = 3
 pair = (initiator_id, target_id)
-raw_obj.visualize_raw_data(pair=(initiator_id,target_id))
+# raw_obj.visualize_raw_data(pair=(initiator_id,target_id))
 
 # %%
 # TODO: Surely there is a better way to do this?? I inherit some attributes + lift function
@@ -102,12 +102,12 @@ if antenna_delay:
 
 # %% Power calibration
 if power_calib:
-    calib_obj.fit_model(std_window=50, chi_thresh=10.8)
+    calib_obj.fit_model(std_window=75, chi_thresh=10.8, merge_pairs=True)
 
 # %% Final plotting
-num_pairs = len(calib_obj.ts_data)
+num_pairs = len(calib_obj.mean_spline)
 fig, axs = plt.subplots(num_pairs)
-for lv0, pair in enumerate(calib_obj.tag_pairs):
+for lv0, pair in enumerate(calib_obj.mean_spline):
     meas = calib_obj.compute_range_meas(pair)
     gt = calib_obj.time_intervals[pair]["r_gt"]
 
