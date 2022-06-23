@@ -2,6 +2,9 @@ import numpy as np
 from numpy.linalg import inv
 import matplotlib.pyplot as plt
 from scipy.interpolate import UnivariateSpline
+# import GPy
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import DotProduct, WhiteKernel, RBF
 
 class UwbCalibrate(object):
     """
@@ -448,13 +451,19 @@ class UwbCalibrate(object):
 
         num_pairs = len(addressed_pairs)
         # fig, axs = plt.subplots(3,num_pairs,sharey='row')
-        fig, axs = plt.subplots(1,num_pairs,sharey='row')
+        fig, axs = plt.subplots(1,num_pairs+1,sharey='row')
         fig2, axs2 = plt.subplots(2,1) 
-        fig3, axs3 = plt.subplots(num_pairs,sharey='row') 
+        fig3, axs3 = plt.subplots(num_pairs+1,sharey='row') 
         fig3.suptitle(r"Outlier rejection")
         axs[0].set_ylabel(r"Bias [m]")
 
         self.mean_spline = {pair:[] for pair in addressed_pairs}
+        self.std_spline = {pair:[] for pair in addressed_pairs}
+
+        self._all_spline_data = {'lifted_pr_trunc': np.empty(0),
+                                 'lifted_pr': np.empty(0),
+                                 'bias': np.empty(0),
+                                 'std': np.empty(0)}
 
         for lv0, pair in enumerate(addressed_pairs):
             range = self.compute_range_meas(pair)
@@ -487,8 +496,15 @@ class UwbCalibrate(object):
             spl, std_spl, bias_trunc, lifted_pr_trunc \
                         = self._reject_outliers(bias, lifted_pr, std_window, chi_thresh, axs3[lv0])
             self.mean_spline[pair] = spl
+            self.std_spline[pair] = std_spl
             bias_std = std_spl(lifted_pr)
             bias_fit = spl(lifted_pr)
+
+            # Save the fit data 
+            self._all_spline_data['lifted_pr_trunc'] = np.append(self._all_spline_data['lifted_pr_trunc'], lifted_pr_trunc)
+            self._all_spline_data['lifted_pr'] = np.append(self._all_spline_data['lifted_pr'], lifted_pr)
+            self._all_spline_data['bias'] = np.append(self._all_spline_data['bias'], bias_trunc)
+            self._all_spline_data['std'] = np.append(self._all_spline_data['std'], bias_std)
 
             ### PLOT 1 ###
             axs[lv0].scatter(lifted_pr_trunc, bias_trunc, label=r"Raw data", linestyle="dotted", s=1)
@@ -508,7 +524,7 @@ class UwbCalibrate(object):
 
             ### PLOT 2 ### Plot with all splines
             axs2[0].plot(lifted_pr, bias_fit, label=r"Pair "+str(pair))
-            axs2[0].legend()
+            axs2[0].legend(loc='upper right')
             axs2[0].set_xlabel(r"$f(P_r)$")
             axs2[0].set_ylabel(r"Bias [m]")
             fig2.suptitle(r"Bias-Power Fit")
@@ -519,6 +535,110 @@ class UwbCalibrate(object):
             axs2[1].set_ylabel(r"Bias Std [m]")
 
         axs[-1].legend()
+
+        # Sort stored fit data
+        sort_pr = np.argsort(self._all_spline_data['lifted_pr_trunc'])
+        self._all_spline_data['lifted_pr_trunc'] = self._all_spline_data['lifted_pr_trunc'][sort_pr]
+        self._all_spline_data['bias'] = self._all_spline_data['bias'][sort_pr]
+        self._all_spline_data['std'] = self._all_spline_data['std'][sort_pr]
+
+        sort_pr = np.argsort(self._all_spline_data['lifted_pr'])
+        self._all_spline_data['lifted_pr'] = self._all_spline_data['lifted_pr'][sort_pr]
+
+        # Fit a spline to the full dataset as well (i.e., not split by pairs)
+        bias_std = np.std(self._rolling_window(self._all_spline_data['bias'].ravel(), std_window), axis=-1)
+        std_spl = UnivariateSpline(self._all_spline_data['lifted_pr_trunc'], bias_std, k=3)
+        bias_std = std_spl(self._all_spline_data['lifted_pr'])
+
+        # Fit spline
+        spl = UnivariateSpline(self._all_spline_data['lifted_pr_trunc'], self._all_spline_data['bias'])
+        bias_fit = spl(self._all_spline_data['lifted_pr'])
+
+        # spl, std_spl, bias_trunc, lifted_pr_trunc \
+        #                 = self._reject_outliers(self._all_spline_data['bias'], 
+        #                                         self._all_spline_data['lifted_pr'], 
+        #                                         std_window, 
+        #                                         chi_thresh, 
+        #                                         axs3[-1])
+
+        # bias_std = std_spl( self._all_spline_data['lifted_pr'])
+        # bias_fit = spl( self._all_spline_data['lifted_pr'])
+
+        axs[-1].scatter(lifted_pr_trunc, bias_trunc, label=r"Raw data", linestyle="dotted", s=1)
+        axs[-1].plot( self._all_spline_data['lifted_pr'], bias_fit, label=r"Fit")
+        axs[-1].fill_between(
+             self._all_spline_data['lifted_pr'].ravel(),
+            bias_fit - 3 * bias_std,
+            bias_fit + 3 * bias_std,
+            alpha=0.5,
+            label=r"99.97% confidence interval",
+        )
+        axs[-1].set_xlabel(r"$f(P_r)$")
+
+        axs2[0].plot(self._all_spline_data['lifted_pr'], bias_fit, label=r"All", linewidth=3)
+        axs2[0].legend(loc='upper right')
+        axs2[0].set_xlabel(r"$f(P_r)$")
+        axs2[0].set_ylabel(r"Bias [m]")
+        fig2.suptitle(r"Bias-Power Fit")
+
+        axs2[1].plot(self._all_spline_data['lifted_pr'], bias_std, label=r"All", linewidth=3)
+        axs2[1].legend()
+        axs2[1].set_xlabel(r"$f(P_r)$")
+        axs2[1].set_ylabel(r"Bias Std [m]")
+
+
+    def get_average_model(self, fit_gp=True):
+        if fit_gp:
+            bias_fit = self._fit_bias_gp()
+        else:
+            bias_fit = self.get_avg_bias()
+        
+        # std_fit = self.get_avg_std()
+
+        # return bias_fit, std_fit
+        return [], []
+
+    def _fit_bias_gp(self):
+        # # GP
+        # kernel = GPy.kern.RBF(input_dim=1, variance=1., lengthscale=1.)
+        # m = GPy.models.GPRegression(self._all_spline_data['lifted_pr'].reshape(-1,1),
+        #                             self._all_spline_data['bias'].reshape(-1,1),
+        #                             kernel)
+
+        # print(m)
+        # m.optimize(messages=True)
+        # print(m)
+
+        # mean, var = m.predict(self._all_spline_data['lifted_pr'])
+
+        kernel = WhiteKernel()
+
+        X =  self._all_spline_data['lifted_pr'].reshape(-1,1)
+        y =  self._all_spline_data['bias'].reshape(-1,1)
+        gpr = GaussianProcessRegressor(kernel=kernel, random_state=0).fit(X[0:100],y[0:100])
+
+        gpr.score(X[0:100],y[0:100])
+        mean, std = gpr.predict(X[0:100], return_std=True)
+        mean = mean.flatten()
+        std = std.flatten()
+
+        fig, axs = plt.subplots(1)
+        axs.plot(self._all_spline_data['lifted_pr'][0:100], mean)
+        axs.plot(self._all_spline_data['lifted_pr'][0:100], mean + 3*std)
+        axs.plot(self._all_spline_data['lifted_pr'][0:100], mean + -3*std)
+        axs.scatter(self._all_spline_data['lifted_pr'], self._all_spline_data['bias'])
+
+        plt.show(block=True)
+
+        return []
+
+    def get_avg_bias(self):
+        #TODO: get_avg_bias
+        pass
+
+    def get_avg_std(self):
+        #TODO: get_avg_std
+        pass
 
     def calibrate_antennas(self):
         """

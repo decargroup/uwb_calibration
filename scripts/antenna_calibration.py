@@ -104,6 +104,8 @@ if antenna_delay:
 if power_calib:
     calib_obj.fit_model(std_window=75, chi_thresh=10.8, merge_pairs=True)
 
+    # common_gp, std_fit = calib_obj.get_average_model(fit_gp=True)
+
 # %% Final plotting
 num_pairs = len(calib_obj.mean_spline)
 fig, axs = plt.subplots(num_pairs)
