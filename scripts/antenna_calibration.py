@@ -27,8 +27,8 @@ raw_obj = PostProcess("datasets/2022_06_15/bias_calibration/merged.bag",
 kf = False
 power_calib = True
 antenna_delay = True
-initiator_id = 2
-target_id = 3
+initiator_id = 3
+target_id = 5
 pair = (initiator_id, target_id)
 # raw_obj.visualize_raw_data(pair=(initiator_id,target_id))
 
@@ -38,9 +38,9 @@ calib_obj = UwbCalibrate(raw_obj, rm_static=True)
 
 ## Pre-calibration
 num_pairs = len(calib_obj.ts_data)
-meas_old = {pair:[] for pair in calib_obj.ts_data}
-for lv0, pair in enumerate(calib_obj.ts_data):
-    meas_old[pair] = calib_obj.compute_range_meas(pair,
+meas_old = {pair_i:[] for pair_i in calib_obj.ts_data}
+for lv0, pair_i in enumerate(calib_obj.ts_data):
+    meas_old[pair_i] = calib_obj.compute_range_meas(pair_i,
                                                   visualize=False)
 
 plt.show(block=True)
@@ -104,39 +104,89 @@ if antenna_delay:
 if power_calib:
     calib_obj.fit_model(std_window=75, chi_thresh=10.8, merge_pairs=True)
 
-    # common_gp, std_fit = calib_obj.get_average_model(fit_gp=True)
+    # bias_fit, std_fit = calib_obj.get_average_model()
 
 # %% Final plotting
 num_pairs = len(calib_obj.mean_spline)
 fig, axs = plt.subplots(num_pairs)
-for lv0, pair in enumerate(calib_obj.mean_spline):
-    meas = calib_obj.compute_range_meas(pair)
-    gt = calib_obj.time_intervals[pair]["r_gt"]
+for lv0, pair_i in enumerate(calib_obj.mean_spline):
+    meas = calib_obj.compute_range_meas(pair_i)
+    gt = calib_obj.time_intervals[pair_i]["r_gt"]
 
     # TODO: full bias calibration inside compute_range_meas
-    spl = calib_obj.mean_spline[pair]
+    spl = calib_obj.mean_spline[pair_i]
     Pr1_idx = calib_obj.Pr1_idx
     Pr2_idx = calib_obj.Pr2_idx
-    lifted_Pr1 = calib_obj.lift(calib_obj.ts_data[pair][:,Pr1_idx])
-    lifted_Pr2 = calib_obj.lift(calib_obj.ts_data[pair][:,Pr2_idx])
+    lifted_Pr1 = calib_obj.lift(calib_obj.ts_data[pair_i][:,Pr1_idx])
+    lifted_Pr2 = calib_obj.lift(calib_obj.ts_data[pair_i][:,Pr2_idx])
     pr_bias = spl(0.5 * (lifted_Pr1 + lifted_Pr2))
     meas_calibrated = meas - pr_bias
 
     axs[lv0].plot(meas-gt, label = 'w/ Antenna Delay Calibration')
     axs[lv0].plot(meas_calibrated-gt, label = 'Fully Calibrated')
-    axs[lv0].plot(meas_old[pair]-gt, label = 'Raw')
+    axs[lv0].plot(meas_old[pair_i]-gt, label = 'Raw')
     axs[lv0].set_ylabel("Range Error [m]")
     axs[lv0].set_xlabel("Measurement Number")
     axs[lv0].set_ylim([-0.35, 0.6])
 
-    print("Raw Mean: "+ str(np.mean(meas_old[pair]-gt)))
+    print("Raw Mean: "+ str(np.mean(meas_old[pair_i]-gt)))
     print("Antenna-Calibrated Mean: " + str(np.mean(meas-gt)))
     print("Fully-Calibrated Mean: " + str(np.mean(meas_calibrated-gt)))
-    print("Raw Std: "+ str(np.std(meas_old[pair]-gt)))
+    print("Raw Std: "+ str(np.std(meas_old[pair_i]-gt)))
     print("Antenna-Calibrated Std: " + str(np.std(meas-gt)))
     print("Fully-Calibrated Std: " + str(np.std(meas_calibrated-gt)))
     print("---------------------------------------------------------------")
 
 axs[0].legend()
+# plt.show(block=True)
+# %% TESTING 
+raw_obj2 = PostProcess("datasets/2022_06_15/bias_calibration/merged.bag",
+                       tag_ids,
+                       moment_arms,
+                       num_meas=-1)
+
+calib_obj2 = UwbCalibrate(raw_obj2, rm_static=False)
+
+## Pre-calibration
+num_pairs = len(calib_obj2.ts_data)
+meas_old = {pair_i:[] for pair_i in calib_obj2.ts_data}
+for lv0, pair_i in enumerate(calib_obj2.ts_data):
+    meas_old[pair_i] = calib_obj2.compute_range_meas(pair_i,
+                                                  visualize=False)
+
+# plt.show(block=True)
+
+calib_obj2.correct_antenna_delay(delays)
+
+meas_new = calib_obj2.compute_range_meas(pair)
+lifted_pr = calib_obj2.lift(0.5*(calib_obj2.ts_data[pair][:,calib_obj2.Pr1_idx] + calib_obj2.ts_data[pair][:,calib_obj2.Pr2_idx]))
+meas_new -= calib_obj.spl(lifted_pr)
+
+t = calib_obj2.ts_data[pair][:,0] - calib_obj2.ts_data[pair][0,0]
+std = calib_obj.spl(lifted_pr)
+
+fig, axs = plt.subplots(1)
+gt = calib_obj2.time_intervals[pair]["r_gt"]
+
+axs.plot(t, meas_new-gt, label = 'Fully Calibrated')
+axs.plot(t, meas_old[pair]-gt, label = 'Raw')
+axs.set_ylabel("Range Error [m]")
+axs.set_xlabel("Measurement Number")
+# axs.set_ylim([-0.35, 0.6])
+
+axs.fill_between(
+                    t,
+                    - 3 * std,
+                    3 * std,
+                    alpha=0.5,
+                    label=r"99.97% confidence interval",
+                )
+
+print("Raw Mean: "+ str(np.mean(meas_old[pair]-gt)))
+print("Fully-Calibrated Mean: " + str(np.mean(meas_new-gt)))
+print("Raw Std: "+ str(np.std(meas_old[pair]-gt)))
+print("Fully-Calibrated Std: " + str(np.std(meas_new-gt)))
+print("---------------------------------------------------------------")
+
+axs.legend()
 plt.show(block=True)
-# %%

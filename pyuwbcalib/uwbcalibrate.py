@@ -2,9 +2,7 @@ import numpy as np
 from numpy.linalg import inv
 import matplotlib.pyplot as plt
 from scipy.interpolate import UnivariateSpline
-# import GPy
-from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import DotProduct, WhiteKernel, RBF
+from scipy.optimize import least_squares
 
 class UwbCalibrate(object):
     """
@@ -259,7 +257,13 @@ class UwbCalibrate(object):
         --------
         np.array: The solution to the Ax=b problem.
         """
-        return np.linalg.lstsq(A, b)
+        # return np.linalg.lstsq(A, b)
+        n = A.shape[1]
+        return least_squares(self._cost_func, np.zeros(n), loss='cauchy', f_scale=0.1, args=(A,b.T))
+
+    @staticmethod
+    def _cost_func(x,A,b):
+        return (A@x - b).reshape(-1,)
 
     def filter_data(self, Q, R, visualize=False):
         if visualize:
@@ -586,51 +590,16 @@ class UwbCalibrate(object):
         axs2[1].set_xlabel(r"$f(P_r)$")
         axs2[1].set_ylabel(r"Bias Std [m]")
 
+        self.spl = spl
+        self.std_spl = std_spl
 
-    def get_average_model(self, fit_gp=True):
-        if fit_gp:
-            bias_fit = self._fit_bias_gp()
-        else:
-            bias_fit = self.get_avg_bias()
+    def get_average_model(self):
+        bias_fit = self.get_avg_bias()
         
         # std_fit = self.get_avg_std()
 
         # return bias_fit, std_fit
         return [], []
-
-    def _fit_bias_gp(self):
-        # # GP
-        # kernel = GPy.kern.RBF(input_dim=1, variance=1., lengthscale=1.)
-        # m = GPy.models.GPRegression(self._all_spline_data['lifted_pr'].reshape(-1,1),
-        #                             self._all_spline_data['bias'].reshape(-1,1),
-        #                             kernel)
-
-        # print(m)
-        # m.optimize(messages=True)
-        # print(m)
-
-        # mean, var = m.predict(self._all_spline_data['lifted_pr'])
-
-        kernel = WhiteKernel()
-
-        X =  self._all_spline_data['lifted_pr'].reshape(-1,1)
-        y =  self._all_spline_data['bias'].reshape(-1,1)
-        gpr = GaussianProcessRegressor(kernel=kernel, random_state=0).fit(X[0:100],y[0:100])
-
-        gpr.score(X[0:100],y[0:100])
-        mean, std = gpr.predict(X[0:100], return_std=True)
-        mean = mean.flatten()
-        std = std.flatten()
-
-        fig, axs = plt.subplots(1)
-        axs.plot(self._all_spline_data['lifted_pr'][0:100], mean)
-        axs.plot(self._all_spline_data['lifted_pr'][0:100], mean + 3*std)
-        axs.plot(self._all_spline_data['lifted_pr'][0:100], mean + -3*std)
-        axs.scatter(self._all_spline_data['lifted_pr'], self._all_spline_data['bias'])
-
-        plt.show(block=True)
-
-        return []
 
     def get_avg_bias(self):
         #TODO: get_avg_bias
@@ -664,7 +633,7 @@ class UwbCalibrate(object):
         A = A[nan_idx, :]
         b = b[nan_idx]
 
-        x = self._solve_for_antenna_delays(A, b)[0]
+        x = self._solve_for_antenna_delays(A, b)['x']
         x = x.flatten()
 
         print(np.linalg.norm(b))
