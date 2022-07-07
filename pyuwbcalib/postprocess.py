@@ -241,8 +241,8 @@ class PostProcess(object):
                                  row["rx2"]*self._to_ns,
                                  row["tx3"]*self._to_ns,
                                  row["rx3"]*self._to_ns,
-                                 row["power1"],
-                                 row["power2"]])
+                                 row["fpp1"],
+                                 row["fpp2"]])
 
                 # Initialize this pair if not already part of the dict
                 if pair not in ts_data:

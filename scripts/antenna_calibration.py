@@ -15,7 +15,7 @@ tag_ids={'ifo001': [1,2],
 moment_arms={'ifo001': [[0.15846,-0.16067,-0.07762], [-0.19711,0.14649,-0.082706]],
              'ifo002': [[0.18620,-0.13653,-0.05268], [-0.16133,0.17290,-0.047776]],
              'ifo003': [[0.18776,-0.16791,-0.08407], [-0.15605,0.14864,-0.079526]]}
-raw_obj = PostProcess("datasets/2022_06_15/bias_calibration/merged.bag",
+raw_obj = PostProcess("datasets/2022_07_07/08/merged.bag",
                       tag_ids,
                       moment_arms,
                       num_meas=-1)
@@ -140,7 +140,7 @@ for lv0, pair_i in enumerate(calib_obj.mean_spline):
 axs[0].legend()
 # plt.show(block=True)
 # %% TESTING 
-raw_obj2 = PostProcess("datasets/2022_06_15/bias_calibration/merged.bag",
+raw_obj2 = PostProcess("datasets/2022_07_07/00/merged.bag",
                        tag_ids,
                        moment_arms,
                        num_meas=-1)
@@ -163,24 +163,31 @@ lifted_pr = calib_obj2.lift(0.5*(calib_obj2.ts_data[pair][:,calib_obj2.Pr1_idx] 
 meas_new -= calib_obj.spl(lifted_pr)
 
 t = calib_obj2.ts_data[pair][:,0] - calib_obj2.ts_data[pair][0,0]
-std = calib_obj.spl(lifted_pr)
+std = calib_obj.std_spl(lifted_pr)
 
-fig, axs = plt.subplots(1)
+fig, axs = plt.subplots(2,1)
 gt = calib_obj2.time_intervals[pair]["r_gt"]
 
-axs.plot(t, meas_new-gt, label = 'Fully Calibrated')
-axs.plot(t, meas_old[pair]-gt, label = 'Raw')
-axs.set_ylabel("Range Error [m]")
-axs.set_xlabel("Measurement Number")
-# axs.set_ylim([-0.35, 0.6])
+axs[0].plot((t-t[0])/1e9, meas_new-gt, label = r'Fully Calibrated')
+axs[0].plot((t-t[0])/1e9, meas_old[pair]-gt, label = r'Raw')
+axs[0].set_ylabel(r"Range Error [m]")
+axs[0].set_xlabel(r"Time [s]")
+# axs[0].set_ylim([-0.35, 0.6])
 
-axs.fill_between(
-                    t,
+axs[0].fill_between(
+                    (t-t[0])/1e9,
                     - 3 * std,
                     3 * std,
                     alpha=0.5,
                     label=r"99.97% confidence interval",
                 )
+axs[0].legend()
+
+axs[1].plot((t-t[0])/1e9, lifted_pr, label = r'Lifted Power')
+axs[1].set_ylabel(r"$f(P_r)$")
+axs[1].set_xlabel(r"Time [s]")
+
+axs[1].legend()
 
 print("Raw Mean: "+ str(np.mean(meas_old[pair]-gt)))
 print("Fully-Calibrated Mean: " + str(np.mean(meas_new-gt)))
@@ -188,5 +195,6 @@ print("Raw Std: "+ str(np.std(meas_old[pair]-gt)))
 print("Fully-Calibrated Std: " + str(np.std(meas_new-gt)))
 print("---------------------------------------------------------------")
 
-axs.legend()
+
 plt.show(block=True)
+# %%
