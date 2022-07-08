@@ -115,11 +115,11 @@ for lv0, pair_i in enumerate(calib_obj.mean_spline):
 
     # TODO: full bias calibration inside compute_range_meas
     spl = calib_obj.mean_spline[pair_i]
-    Pr1_idx = calib_obj.Pr1_idx
-    Pr2_idx = calib_obj.Pr2_idx
-    lifted_Pr1 = calib_obj.lift(calib_obj.ts_data[pair_i][:,Pr1_idx])
-    lifted_Pr2 = calib_obj.lift(calib_obj.ts_data[pair_i][:,Pr2_idx])
-    pr_bias = spl(0.5 * (lifted_Pr1 + lifted_Pr2))
+    fpp1_idx = calib_obj.fpp1_idx
+    fpp2_idx = calib_obj.fpp2_idx
+    lifted_fpp1 = calib_obj.lift(calib_obj.ts_data[pair_i][:,fpp1_idx])
+    lifted_fpp2 = calib_obj.lift(calib_obj.ts_data[pair_i][:,fpp2_idx])
+    pr_bias = spl(0.5 * (lifted_fpp1 + lifted_fpp2))
     meas_calibrated = meas - pr_bias
 
     axs[lv0].plot(meas-gt, label = 'w/ Antenna Delay Calibration')
@@ -140,7 +140,7 @@ for lv0, pair_i in enumerate(calib_obj.mean_spline):
 axs[0].legend()
 # plt.show(block=True)
 # %% TESTING 
-raw_obj2 = PostProcess("datasets/2022_07_07/00/merged.bag",
+raw_obj2 = PostProcess("datasets/2022_07_07/line_triangle_line/merged.bag",
                        tag_ids,
                        moment_arms,
                        num_meas=-1)
@@ -159,13 +159,14 @@ for lv0, pair_i in enumerate(calib_obj2.ts_data):
 calib_obj2.correct_antenna_delay(delays)
 
 meas_new = calib_obj2.compute_range_meas(pair)
-lifted_pr = calib_obj2.lift(0.5*(calib_obj2.ts_data[pair][:,calib_obj2.Pr1_idx] + calib_obj2.ts_data[pair][:,calib_obj2.Pr2_idx]))
+avg_fpp = 0.5*(calib_obj2.ts_data[pair][:,calib_obj2.fpp1_idx] + calib_obj2.ts_data[pair][:,calib_obj2.fpp2_idx])
+lifted_pr = calib_obj2.lift(avg_fpp)
 meas_new -= calib_obj.spl(lifted_pr)
 
 t = calib_obj2.ts_data[pair][:,0] - calib_obj2.ts_data[pair][0,0]
 std = calib_obj.std_spl(lifted_pr)
 
-fig, axs = plt.subplots(2,1)
+fig, axs = plt.subplots(4,1)
 gt = calib_obj2.time_intervals[pair]["r_gt"]
 
 axs[0].plot((t-t[0])/1e9, meas_new-gt, label = r'Fully Calibrated')
@@ -183,11 +184,30 @@ axs[0].fill_between(
                 )
 axs[0].legend()
 
-axs[1].plot((t-t[0])/1e9, lifted_pr, label = r'Lifted Power')
+avg_rxp = 0.5*(calib_obj2.ts_data[pair][:,calib_obj2.rxp1_idx] + calib_obj2.ts_data[pair][:,calib_obj2.rxp2_idx])
+lifted_rxp = calib_obj2.lift(avg_rxp)
+
+axs[1].plot((t-t[0])/1e9, lifted_pr, label = r'Lifted FPP Power')
+axs[1].plot((t-t[0])/1e9, lifted_rxp, label = r'Lifted RXP Power')
 axs[1].set_ylabel(r"$f(P_r)$")
 axs[1].set_xlabel(r"Time [s]")
 
 axs[1].legend()
+
+axs[2].plot((t-t[0])/1e9, lifted_pr - lifted_rxp, label = r'FPP - RXP')
+axs[2].set_ylabel(r"FPP - RXP [dbm]")
+axs[2].set_xlabel(r"Time [s]")
+
+# axs[2].legend()
+
+avg_std = 0.5*(calib_obj2.ts_data[pair][:,calib_obj2.std1_idx] + calib_obj2.ts_data[pair][:,calib_obj2.std2_idx])
+axs[3].plot((t-t[0])/1e9, avg_std, label = r'LDE std avg')
+axs[3].plot((t-t[0])/1e9, calib_obj2.ts_data[pair][:,calib_obj2.std1_idx], label = r'LDE std1')
+axs[3].plot((t-t[0])/1e9, calib_obj2.ts_data[pair][:,calib_obj2.std2_idx], label = r'LDE std2')
+axs[3].set_ylabel(r"LDE std [?]")
+axs[3].set_xlabel(r"Time [s]")
+
+axs[3].legend()
 
 print("Raw Mean: "+ str(np.mean(meas_old[pair]-gt)))
 print("Fully-Calibrated Mean: " + str(np.mean(meas_new-gt)))

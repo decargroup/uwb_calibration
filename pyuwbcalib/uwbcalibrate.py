@@ -60,8 +60,12 @@ class UwbCalibrate(object):
         self.rx2_idx = 6
         self.tx3_idx = 7
         self.rx3_idx = 8
-        self.Pr1_idx = 9
-        self.Pr2_idx = 10
+        self.fpp1_idx = 9
+        self.fpp2_idx = 10
+        self.rxp1_idx = 11
+        self.rxp2_idx = 12
+        self.std1_idx = 13
+        self.std2_idx = 14
 
         self.lift = processed_data.lift
 
@@ -472,8 +476,8 @@ class UwbCalibrate(object):
         for lv0, pair in enumerate(addressed_pairs):
             range = self.compute_range_meas(pair)
             bias = range - self.time_intervals[pair]["r_gt"]
-            lifted_pr = self.lift(0.5*self.ts_data[pair][:,self.Pr1_idx] \
-                                  + 0.5*self.ts_data[pair][:,self.Pr2_idx])
+            lifted_pr = self.lift(0.5*self.ts_data[pair][:,self.fpp1_idx] \
+                                  + 0.5*self.ts_data[pair][:,self.fpp2_idx])
             r_gt_unsorted = self.time_intervals[pair]["r_gt"]
 
             if merge_pairs and pair[::-1] in self.tag_pairs:
@@ -482,8 +486,8 @@ class UwbCalibrate(object):
                 range = np.append(range, range_new)
                 bias = np.append(bias, range_new - self.time_intervals[opposite_pair]["r_gt"])
                 lifted_pr = np.append(lifted_pr, 
-                                      self.lift(0.5*self.ts_data[opposite_pair][:,self.Pr1_idx] \
-                                        + 0.5*self.ts_data[opposite_pair][:,self.Pr2_idx]))
+                                      self.lift(0.5*self.ts_data[opposite_pair][:,self.fpp1_idx] \
+                                        + 0.5*self.ts_data[opposite_pair][:,self.fpp2_idx]))
                 r_gt_unsorted = np.append(r_gt_unsorted, self.time_intervals[opposite_pair]["r_gt"])
 
             pr_thresh = 2

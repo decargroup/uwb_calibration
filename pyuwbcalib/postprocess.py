@@ -242,11 +242,15 @@ class PostProcess(object):
                                  row["tx3"]*self._to_ns,
                                  row["rx3"]*self._to_ns,
                                  row["fpp1"],
-                                 row["fpp2"]])
+                                 row["fpp2"],
+                                 row["rxp1"],
+                                 row["rxp2"],
+                                 row["std1"],
+                                 row["std2"]])
 
                 # Initialize this pair if not already part of the dict
                 if pair not in ts_data:
-                    ts_data[pair] = np.empty((0,11))
+                    ts_data[pair] = np.empty((0,15)) # TODO: automate number of columns
 
                 ts_data[pair] = np.vstack((ts_data[pair], temp))
 
@@ -258,8 +262,12 @@ class PostProcess(object):
         self.rx2_idx = 6
         self.tx3_idx = 7
         self.rx3_idx = 8
-        self.Pr1_idx = 9
-        self.Pr2_idx = 10
+        self.fpp1_idx = 9
+        self.fpp2_idx = 10
+        self.rxp1_idx = 11
+        self.rxp2_idx = 12
+        self.std1_idx = 13
+        self.std2_idx = 14
 
         self.tag_pairs = list(ts_data.keys())
 
@@ -561,8 +569,8 @@ class PostProcess(object):
         """
         interv = self.time_intervals[pair]
         Pr = {}
-        Pr["Pr1"] = self.ts_data[pair][:,self.Pr1_idx]
-        Pr["Pr2"] = self.ts_data[pair][:,self.Pr2_idx]
+        Pr["fpp1"] = self.ts_data[pair][:,self.fpp1_idx]
+        Pr["fpp2"] = self.ts_data[pair][:,self.fpp2_idx]
         bias = self.ts_data[pair][:,self.range_idx] - interv["r_gt"]
 
         # Axes limits
