@@ -27,7 +27,7 @@ raw_obj = PostProcess("datasets/2022_07_07/08/merged.bag",
 kf = False
 power_calib = True
 antenna_delay = True
-initiator_id = 3
+initiator_id = 1
 target_id = 5
 pair = (initiator_id, target_id)
 # raw_obj.visualize_raw_data(pair=(initiator_id,target_id))
@@ -102,7 +102,7 @@ if antenna_delay:
 
 # %% Power calibration
 if power_calib:
-    calib_obj.fit_model(std_window=75, chi_thresh=10.8, merge_pairs=True)
+    calib_obj.fit_model(std_window=25, chi_thresh=15.8, merge_pairs=True)
 
     # bias_fit, std_fit = calib_obj.get_average_model()
 
@@ -140,7 +140,7 @@ for lv0, pair_i in enumerate(calib_obj.mean_spline):
 axs[0].legend()
 # plt.show(block=True)
 # %% TESTING 
-raw_obj2 = PostProcess("datasets/2022_07_07/line_triangle_line/merged.bag",
+raw_obj2 = PostProcess("datasets/2022_07_07/08/merged.bag",
                        tag_ids,
                        moment_arms,
                        num_meas=-1)
@@ -166,7 +166,7 @@ meas_new -= calib_obj.spl(lifted_pr)
 t = calib_obj2.ts_data[pair][:,0] - calib_obj2.ts_data[pair][0,0]
 std = calib_obj.std_spl(lifted_pr)
 
-fig, axs = plt.subplots(4,1)
+fig, axs = plt.subplots(4,1, sharex='all')
 gt = calib_obj2.time_intervals[pair]["r_gt"]
 
 axs[0].plot((t-t[0])/1e9, meas_new-gt, label = r'Fully Calibrated')
@@ -194,16 +194,14 @@ axs[1].set_xlabel(r"Time [s]")
 
 axs[1].legend()
 
-axs[2].plot((t-t[0])/1e9, lifted_pr - lifted_rxp, label = r'FPP - RXP')
-axs[2].set_ylabel(r"FPP - RXP [dbm]")
+axs[2].plot((t-t[0])/1e9, lifted_rxp - lifted_pr, label = r'RXP - FPP')
+axs[2].set_ylabel(r"RXP - FPP [?]")
 axs[2].set_xlabel(r"Time [s]")
 
 # axs[2].legend()
 
 avg_std = 0.5*(calib_obj2.ts_data[pair][:,calib_obj2.std1_idx] + calib_obj2.ts_data[pair][:,calib_obj2.std2_idx])
 axs[3].plot((t-t[0])/1e9, avg_std, label = r'LDE std avg')
-axs[3].plot((t-t[0])/1e9, calib_obj2.ts_data[pair][:,calib_obj2.std1_idx], label = r'LDE std1')
-axs[3].plot((t-t[0])/1e9, calib_obj2.ts_data[pair][:,calib_obj2.std2_idx], label = r'LDE std2')
 axs[3].set_ylabel(r"LDE std [?]")
 axs[3].set_xlabel(r"Time [s]")
 
@@ -214,6 +212,20 @@ print("Fully-Calibrated Mean: " + str(np.mean(meas_new-gt)))
 print("Raw Std: "+ str(np.std(meas_old[pair]-gt)))
 print("Fully-Calibrated Std: " + str(np.std(meas_new-gt)))
 print("---------------------------------------------------------------")
+
+
+fig, axs = plt.subplots(1)
+axs.scatter(lifted_pr-lifted_rxp,meas_old[pair]-gt)
+axs.scatter(lifted_pr,meas_old[pair]-gt)
+axs.scatter(lifted_rxp,meas_old[pair]-gt)
+# axs.set_xlabel(r"$f(P_r)$")
+# axs.set_ylabel(r"Bias [m]")
+
+fig, axs = plt.subplots(1)
+axs.plot((t-t[0])/1e9, meas_old[pair])
+axs.plot((t-t[0])/1e9, gt)
+# axs.set_xlabel(r"$f(P_r)$")
+# axs.set_ylabel(r"Bias [m]")
 
 
 plt.show(block=True)

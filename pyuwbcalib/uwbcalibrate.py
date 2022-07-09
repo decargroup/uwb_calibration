@@ -33,7 +33,7 @@ class UwbCalibrate(object):
 
     _c = 299702547  # speed of light
 
-    def __init__(self, processed_data, rm_static=True, training_ratio=0.8):
+    def __init__(self, processed_data, rm_static=True):
         """
         Constructor
         """
@@ -69,19 +69,13 @@ class UwbCalibrate(object):
 
         self.lift = processed_data.lift
 
-        self._split_test_data(training_ratio) 
-
-    def _split_test_data(self, training_ratio):
-        # TODO:
-        pass
-
     def _remove_static_regions(self, ts_data, time_intervals):
         '''
         Remove the static region in the extremes.
         '''
         lower_idxs, upper_idxs = self._find_static_extremes(ts_data, time_intervals)
         
-        num_columns = 11
+        num_columns = 15
         num_rows = lambda pair: upper_idxs[pair] - lower_idxs[pair] 
         ts_data_trunc = {pair:np.zeros((num_rows(pair), num_columns)) for \
                                                                 pair in ts_data}
@@ -459,11 +453,11 @@ class UwbCalibrate(object):
 
         num_pairs = len(addressed_pairs)
         # fig, axs = plt.subplots(3,num_pairs,sharey='row')
-        fig, axs = plt.subplots(1,num_pairs+1,sharey='row')
+        fig, axs = plt.subplots(4,int(np.ceil((num_pairs+1)/4)),sharey='all',sharex='all')
         fig2, axs2 = plt.subplots(2,1) 
-        fig3, axs3 = plt.subplots(num_pairs+1,sharey='row') 
+        fig3, axs3 = plt.subplots(4,int(np.ceil((num_pairs+1)/4)),sharey='all',sharex='all') 
         fig3.suptitle(r"Outlier rejection")
-        axs[0].set_ylabel(r"Bias [m]")
+        axs[0,0].set_ylabel(r"Bias [m]")
 
         self.mean_spline = {pair:[] for pair in addressed_pairs}
         self.std_spline = {pair:[] for pair in addressed_pairs}
@@ -502,7 +496,7 @@ class UwbCalibrate(object):
             r_gt = r_gt_unsorted[sort_pr]
 
             spl, std_spl, bias_trunc, lifted_pr_trunc \
-                        = self._reject_outliers(bias, lifted_pr, std_window, chi_thresh, axs3[lv0])
+                        = self._reject_outliers(bias, lifted_pr, std_window, chi_thresh, axs3[np.mod(lv0,4),int(np.floor(lv0/4))])
             self.mean_spline[pair] = spl
             self.std_spline[pair] = std_spl
             bias_std = std_spl(lifted_pr)
@@ -515,16 +509,16 @@ class UwbCalibrate(object):
             self._all_spline_data['std'] = np.append(self._all_spline_data['std'], bias_std)
 
             ### PLOT 1 ###
-            axs[lv0].scatter(lifted_pr_trunc, bias_trunc, label=r"Raw data", linestyle="dotted", s=1)
-            axs[lv0].plot(lifted_pr, bias_fit, label=r"Fit")
-            axs[lv0].fill_between(
+            axs[np.mod(lv0,4),int(np.floor(lv0/4))].scatter(lifted_pr_trunc, bias_trunc, label=r"Raw data", linestyle="dotted", s=1)
+            axs[np.mod(lv0,4),int(np.floor(lv0/4))].plot(lifted_pr, bias_fit, label=r"Fit")
+            axs[np.mod(lv0,4),int(np.floor(lv0/4))].fill_between(
                 lifted_pr.ravel(),
                 bias_fit - 3 * bias_std,
                 bias_fit + 3 * bias_std,
                 alpha=0.5,
                 label=r"99.97% confidence interval",
             )
-            axs[lv0].set_xlabel(r"$f(P_r)$")
+            axs[np.mod(lv0,4),int(np.floor(lv0/4))].set_xlabel(r"$f(P_r)$")
             
             # ## Visualize std vs. distance
             # axs[2,lv0].scatter(r_gt, bias_std, s=1)
@@ -542,7 +536,7 @@ class UwbCalibrate(object):
             axs2[1].set_xlabel(r"$f(P_r)$")
             axs2[1].set_ylabel(r"Bias Std [m]")
 
-        axs[-1].legend()
+        axs[0,-1].legend()
 
         # Sort stored fit data
         sort_pr = np.argsort(self._all_spline_data['lifted_pr_trunc'])
@@ -562,26 +556,30 @@ class UwbCalibrate(object):
         spl = UnivariateSpline(self._all_spline_data['lifted_pr_trunc'], self._all_spline_data['bias'])
         bias_fit = spl(self._all_spline_data['lifted_pr'])
 
-        # spl, std_spl, bias_trunc, lifted_pr_trunc \
-        #                 = self._reject_outliers(self._all_spline_data['bias'], 
-        #                                         self._all_spline_data['lifted_pr'], 
-        #                                         std_window, 
-        #                                         chi_thresh, 
-        #                                         axs3[-1])
+        spl, std_spl, bias_trunc, lifted_pr_trunc \
+                        = self._reject_outliers(self._all_spline_data['bias'], 
+                                                self._all_spline_data['lifted_pr_trunc'], 
+                                                std_window, 
+                                                chi_thresh, 
+                                                axs3[np.mod(lv0+1,4),int(np.floor((lv0+1)/4))])
 
-        # bias_std = std_spl( self._all_spline_data['lifted_pr'])
-        # bias_fit = spl( self._all_spline_data['lifted_pr'])
+        bias_std = std_spl( self._all_spline_data['lifted_pr'])
+        bias_fit = spl( self._all_spline_data['lifted_pr'])
 
-        axs[-1].scatter(lifted_pr_trunc, bias_trunc, label=r"Raw data", linestyle="dotted", s=1)
-        axs[-1].plot( self._all_spline_data['lifted_pr'], bias_fit, label=r"Fit")
-        axs[-1].fill_between(
+        axs[np.mod(lv0+1,4),int(np.floor((lv0+1)/4))].scatter(lifted_pr_trunc,
+                                                            bias_trunc, 
+                                                            label=r"Raw data", 
+                                                            linestyle="dotted", 
+                                                            s=1)
+        axs[np.mod(lv0+1,4),int(np.floor((lv0+1)/4))].plot( self._all_spline_data['lifted_pr'], bias_fit, label=r"Fit")
+        axs[np.mod(lv0+1,4),int(np.floor((lv0+1)/4))].fill_between(
              self._all_spline_data['lifted_pr'].ravel(),
             bias_fit - 3 * bias_std,
             bias_fit + 3 * bias_std,
             alpha=0.5,
             label=r"99.97% confidence interval",
         )
-        axs[-1].set_xlabel(r"$f(P_r)$")
+        axs[np.mod(lv0+1,4),int(np.floor((lv0+1)/4))].set_xlabel(r"$f(P_r)$")
 
         axs2[0].plot(self._all_spline_data['lifted_pr'], bias_fit, label=r"All", linewidth=3)
         axs2[0].legend(loc='upper right')
