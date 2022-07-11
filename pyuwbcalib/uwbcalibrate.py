@@ -417,7 +417,7 @@ class UwbCalibrate(object):
             bias_std = std_spl(lifted_pr)
 
             # Fit spline
-            spl = UnivariateSpline(lifted_pr, bias)
+            spl = UnivariateSpline(lifted_pr, bias,k=3)
             bias_fit = spl(lifted_pr)
 
             # Remove outliers
@@ -594,22 +594,6 @@ class UwbCalibrate(object):
 
         self.spl = spl
         self.std_spl = std_spl
-
-    def get_average_model(self):
-        bias_fit = self.get_avg_bias()
-        
-        # std_fit = self.get_avg_std()
-
-        # return bias_fit, std_fit
-        return [], []
-
-    def get_avg_bias(self):
-        #TODO: get_avg_bias
-        pass
-
-    def get_avg_std(self):
-        #TODO: get_avg_std
-        pass
 
     def calibrate_antennas(self):
         """

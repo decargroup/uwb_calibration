@@ -102,7 +102,7 @@ if antenna_delay:
 
 # %% Power calibration
 if power_calib:
-    calib_obj.fit_model(std_window=25, chi_thresh=15.8, merge_pairs=True)
+    calib_obj.fit_model(std_window=25, chi_thresh=16.8, merge_pairs=True)
 
     # bias_fit, std_fit = calib_obj.get_average_model()
 
@@ -138,7 +138,7 @@ for lv0, pair_i in enumerate(calib_obj.mean_spline):
     print("---------------------------------------------------------------")
 
 axs[0].legend()
-# plt.show(block=True)
+plt.show(block=True)
 # %% TESTING 
 raw_obj2 = PostProcess("datasets/2022_07_07/08/merged.bag",
                        tag_ids,
