@@ -27,8 +27,8 @@ raw_obj = PostProcess("datasets/2022_07_07/08/merged.bag",
 kf = False
 power_calib = True
 antenna_delay = True
-initiator_id = 1
-target_id = 5
+initiator_id = 2
+target_id = 3
 pair = (initiator_id, target_id)
 # raw_obj.visualize_raw_data(pair=(initiator_id,target_id))
 
@@ -48,9 +48,10 @@ plt.show(block=True)
 # %%
 if kf:
     # Implement the Kalman filter and update the estimates
-    R = 20
-    Q = np.array(([0.4,0], [0,640]))
-    calib_obj.filter_data(Q, R, visualize = True)
+    R = (1)**2
+    # Q = np.array(([4*1e8/1e8,0], [0,640]))
+    Q = np.array(([0.000005,0], [0,.3]))**2
+    calib_obj.filter_data(Q, R, visualize = False)
 
     meas_filtered = calib_obj.compute_range_meas(pair,
                                                 visualize=False, owr=True)
@@ -60,12 +61,12 @@ if kf:
     # ax.set_ylabel("Range [m]")
     # ax.set_ylim(0, 4)
     t = calib_obj.time_intervals[pair]['t']
-    plt.plot(t, meas_old, linewidth=1, label="Raw")
-    plt.plot(t, meas_filtered, linewidth=1, label="Calibrated")
-    plt.plot(t, calib_obj.time_intervals[pair]['r_gt'])
+    ax.plot(t, meas_old[pair], linewidth=1, label="Raw")
+    ax.plot(t, meas_filtered, linewidth=1, label="Calibrated")
+    ax.plot(t, calib_obj.time_intervals[pair]['r_gt'], label="Ground Truth")
     ax.legend()
 
-    # plt.show(block=True)
+    plt.show(block=True)
 
 # %% Antenna delay: # TODO: Should we do power calibration first to remove outliers? 
                     # TODO: Alternatively, could do robust LS

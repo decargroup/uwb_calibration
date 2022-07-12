@@ -266,10 +266,10 @@ class UwbCalibrate(object):
     def filter_data(self, Q, R, visualize=False):
         if visualize:
             num_of_pairs = len(self.time_intervals)
-            fig, axs = plt.subplots(num_of_pairs)
+            fig, axs = plt.subplots(num_of_pairs, sharey='all', sharex='all')
 
         for lv0, pair in enumerate(self.tag_pairs):
-            x_hist, P_hist = self._clock_filter(pair, Q, R)
+            x_hist, P_hist, kf_outliers_idx = self._clock_filter(pair, Q, R)
             
             self._update_tof_intervals(pair, x_hist[0,:])
 
@@ -283,7 +283,7 @@ class UwbCalibrate(object):
                 y2 = Db2 - Ra2
                 y_tau = - y1 - 0.5*(Db1/(Db2-Db1))*y2
 
-                self._plot_kf(x_hist, P_hist, axs[lv0], y_tau)
+                self._plot_kf(x_hist, P_hist, axs[lv0], y_tau, kf_outliers_idx)
 
         if visualize:
             plt.show()
@@ -301,8 +301,9 @@ class UwbCalibrate(object):
                 = self.time_intervals[pair]["tof3"] + tau
 
     @staticmethod
-    def _plot_kf(x, P, axs, y_tau):
-        axs.plot(x[0,:]-y_tau)
+    def _plot_kf(x, P, axs, y_tau, outliers):
+        inliers = ~outliers
+        axs.plot(x[0,inliers]-y_tau[inliers])
 
         axs.ticklabel_format(style='plain')
         
@@ -324,13 +325,15 @@ class UwbCalibrate(object):
         n = dt.size
         x_hist = np.zeros((2,n))
         P_hist = np.zeros((2,2,n))
+        kf_outliers_idx = np.zeros((n,), dtype=bool)
 
         # Initial estimate and uncertainty
         tau = 0
         skew = 0
         x = np.array([tau, skew])
         x = x.reshape(2,1)
-        P = np.array(([1e24,0],[0,1e24])) # TODO: better estimate of initial uncertainty
+        P = np.array(([1e18,0],[0,1e9])) # TODO: better estimate of initial uncertainty
+        # P = np.array(([1,0],[0,1])) # TODO: better estimate of initial uncertainty
 
         for lv0, dt_iter in enumerate(dt):
             Ra2_iter = Ra2[lv0]
@@ -344,13 +347,20 @@ class UwbCalibrate(object):
                 P = 0.5*(P + P.T)
 
             y = self._compute_pseudomeasurement(Ra2_iter, Db2_iter, S1_iter, S2_iter, Db1_iter)
-            x, P = self._correct_clocks(x, P, y, R, Db1_iter, Db2_iter)
-            P = 0.5*(P + P.T)
+            x_temp, P_temp, reject = self._correct_clocks(x, P, y, R, Db1_iter, Db2_iter)
 
+            if reject:
+                kf_outliers_idx[lv0] = True
+            else:
+                P = 0.5*(P + P.T)
+
+                x = x_temp
+                P = P_temp
+            
             x_hist[:,lv0] = x.reshape(2,)
-            P_hist[:,:,lv0] = P
-
-        return x_hist, P_hist
+            P_hist[:,:,lv0] = P    
+            
+        return x_hist, P_hist, kf_outliers_idx
 
     @staticmethod
     def _compute_pseudomeasurement(Ra2, Db2, S1, S2, Db1):
@@ -371,13 +381,22 @@ class UwbCalibrate(object):
         # R_matrix = np.array([[1.25*R, 0.5*R], [0.5*R, 2*R]])
         R_matrix = R
 
+        # NIS Test
+        innovation = y - y_check
         S = C @ P @ C.T + R_matrix
-        K = P @ C.T @ inv(S)
+        eps = innovation.T @ inv(S) @ innovation
+        if eps > 10:
+            reject = True
+            x_new = []
+            P_new = []
+        else:
+            K = P @ C.T @ inv(S)
 
-        x_new = x + K @ (y - y_check)
-        P_new = (np.eye(2) - K @ C) @ P
+            reject = False
+            x_new = x + K @ innovation
+            P_new = (np.eye(2) - K @ C) @ P    
 
-        return x_new, P_new
+        return x_new, P_new, reject
 
     @staticmethod
     def _propagate_clocks(x, P, dt, Q):
@@ -386,7 +405,7 @@ class UwbCalibrate(object):
         L = np.array(([dt, 0.5*dt**2], [0, dt]))
 
         x_new = A @ x
-        P_new = A @ P @ A.T + L @ Q @ L.T
+        P_new = A @ P @ A.T + L @ Q @ L.T / dt
         
         return x_new, P_new
 
