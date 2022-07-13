@@ -1,7 +1,7 @@
 # %%
-from pyuwbcalib.uwbcalibrate import UwbCalibrate
 from pyuwbcalib.postprocess import PostProcess
-from scipy.interpolate import UnivariateSpline,BSpline
+from scipy.interpolate import BSpline
+from scipy.signal import butter,filtfilt
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
@@ -12,10 +12,44 @@ sns.set_theme()
 
 # %%
 class PositionEstimator(object):
-    def __init__(self):
-        pass
+    def __init__(self, ids, moment_arms, gt, uwb, tag=1, filter_inputs=False, visualize=False):
+        self.tag = tag
+        self.ids = ids
+        self.moment_arms = moment_arms
+        self.gt = gt
+        self.uwb = uwb
+        
+        self.visualize = visualize
+        
+        if filter_inputs:
+            self._filter_velocity_inputs()
     
-    def func(self):
+    def _filter_velocity_inputs(self):
+        for tag in self.gt['v']:
+            for dimension,v_1d in enumerate(self.gt['v'][tag]):
+                self.gt['v'][tag][dimension] = self._butter_lowpass_filter(v_1d)
+                
+    def _butter_lowpass_filter(self,data):
+        # Some parameters
+        T = 5.0         # Sample Period
+        fs = 30.0       # sample rate, Hz
+        cutoff = 0.5      # desired cutoff frequency of the filter, Hz ,      slightly higher than actual 1.2 Hz
+        nyq = 0.5 * fs  # Nyquist Frequency
+        order = 4       # sin wave can be approx represented as quadrat
+        normal_cutoff = cutoff / nyq
+        
+        # Get the filter coefficients 
+        b, a = butter(order, normal_cutoff, btype='low', analog=False)
+        
+        filtered_data = filtfilt(b, a, data)
+        
+        if self.visualize:
+            #TODO!
+            pass
+        
+        return 
+    
+    def run_kf(self, visualize=False):
         pass
     
 # %%
@@ -69,9 +103,14 @@ if __name__ == "__main__":
             uwb[pair] = {'t':t, 'range':range}
     
     # %%
-    # estimator = PositionEstimator(main_tag, tag_ids, moment_arms, mocap, uwb)
-    # estimator.lowpass_inputs()
-    # estimator.run_kf(visualize = True)
+    estimator = PositionEstimator(ids=tag_ids, 
+                                  moment_arms=moment_arms, 
+                                  gt=mocap, 
+                                  uwb=uwb, 
+                                  tag = main_tag, 
+                                  filter_inputs=True,
+                                  visualize = True)
+    estimator.run_kf()
     
     
     
