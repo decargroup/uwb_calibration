@@ -39,7 +39,7 @@ calib_obj = UwbCalibrate(raw_obj, rm_static=True)
 ## Pre-calibration
 num_pairs = len(calib_obj.ts_data)
 meas_old = {pair_i:[] for pair_i in calib_obj.ts_data}
-for lv0, pair_i in enumerate(calib_obj.ts_data):
+for pair_i in calib_obj.ts_data:
     meas_old[pair_i] = calib_obj.compute_range_meas(pair_i,
                                                   visualize=False)
 

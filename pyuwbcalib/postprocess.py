@@ -41,8 +41,8 @@ class PostProcess(object):
         self.mult_twr = mult_twr
         self.num_meas = num_meas
         self.ranging_with_self = ranging_with_self
-
-        self.num_of_tags = len(tag_ids)
+        
+        self.num_of_tags = sum([len(tag_ids[machine]) for machine in tag_ids])
 
         self.r = [] # stores ground truth positions, per robot
         self.phi = {} # stores ground truth rotation vectors, per robot
@@ -77,6 +77,8 @@ class PostProcess(object):
         for machine in t_sec:
             # Unwrap the clock
             t_nsec[machine] = self._unwrap_gt(t_sec[machine], t_nsec[machine], 1e9)
+            
+        self.t_r = t_nsec
         
         # Store the ground-truth distance between pairs 
         self._gt_distance = self._calculate_gt_distance(t_nsec)
