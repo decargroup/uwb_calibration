@@ -69,12 +69,12 @@ if __name__ == "__main__":
     main_tag = 1
     
     ### --- Get absolute position and velocity of every tag --- ###
-    r = {} # position
-    v = {} # velocity
     mocap = {} # all data
     # Iterate through machines
     for machine in tag_ids:
         # Iterate through tags for every machine
+        r = {} # position
+        v = {} # velocity
         t = raw_obj.t_r[machine]/1e9
         for i,tag in enumerate(raw_obj.tag_ids[machine]):
             r[tag] = raw_obj.r[machine] + (raw_obj.rot[machine].as_matrix() @ moment_arms[machine][i]).T
