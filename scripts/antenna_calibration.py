@@ -141,7 +141,7 @@ for lv0, pair_i in enumerate(calib_obj.mean_spline):
 axs[0].legend()
 plt.show(block=True)
 # %% TESTING 
-raw_obj2 = PostProcess("datasets/2022_07_07/08/merged.bag",
+raw_obj2 = PostProcess("datasets/2022_07_07/01_line_triangle_line/merged.bag",
                        tag_ids,
                        moment_arms,
                        num_meas=-1)
@@ -157,7 +157,8 @@ for lv0, pair_i in enumerate(calib_obj2.ts_data):
 
 # plt.show(block=True)
 
-calib_obj2.correct_antenna_delay(delays)
+if antenna_delay:
+    calib_obj2.correct_antenna_delay(delays)
 
 meas_new = calib_obj2.compute_range_meas(pair)
 avg_fpp = 0.5*(calib_obj2.ts_data[pair][:,calib_obj2.fpp1_idx] + calib_obj2.ts_data[pair][:,calib_obj2.fpp2_idx])
