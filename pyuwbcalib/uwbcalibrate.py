@@ -2,6 +2,8 @@ import numpy as np
 from numpy.linalg import inv
 import matplotlib.pyplot as plt
 from scipy.interpolate import UnivariateSpline
+from scipy.optimize import least_squares
+import pickle
 
 class UwbCalibrate(object):
     """
@@ -32,7 +34,7 @@ class UwbCalibrate(object):
 
     _c = 299702547  # speed of light
 
-    def __init__(self, processed_data, rm_static=True, training_ratio=0.8):
+    def __init__(self, processed_data, rm_static=True):
         """
         Constructor
         """
@@ -52,23 +54,21 @@ class UwbCalibrate(object):
             self.ts_data = processed_data.ts_data
             self.time_intervals = processed_data.time_intervals
 
-        self.range_idx = 1
-        self.tx1_idx = 2
-        self.rx1_idx = 3
-        self.tx2_idx = 4
-        self.rx2_idx = 5
-        self.tx3_idx = 6
-        self.rx3_idx = 7
-        self.Pr1_idx = 8
-        self.Pr2_idx = 9
+        self.range_idx = 2
+        self.tx1_idx = 3
+        self.rx1_idx = 4
+        self.tx2_idx = 5
+        self.rx2_idx = 6
+        self.tx3_idx = 7
+        self.rx3_idx = 8
+        self.fpp1_idx = 9
+        self.fpp2_idx = 10
+        self.rxp1_idx = 11
+        self.rxp2_idx = 12
+        self.std1_idx = 13
+        self.std2_idx = 14
 
         self.lift = processed_data.lift
-
-        self._split_test_data(training_ratio) 
-
-    def _split_test_data(self, training_ratio):
-        # TODO:
-        pass
 
     def _remove_static_regions(self, ts_data, time_intervals):
         '''
@@ -76,7 +76,7 @@ class UwbCalibrate(object):
         '''
         lower_idxs, upper_idxs = self._find_static_extremes(ts_data, time_intervals)
         
-        num_columns = 10
+        num_columns = 15
         num_rows = lambda pair: upper_idxs[pair] - lower_idxs[pair] 
         ts_data_trunc = {pair:np.zeros((num_rows(pair), num_columns)) for \
                                                                 pair in ts_data}
@@ -165,7 +165,7 @@ class UwbCalibrate(object):
         return lower_idxs, upper_idxs
  
 
-    def _calculate_skew_gain(self, initiating_idx, target_idx):
+    def _calculate_skew_gain(self, pair):
         """
         Calculates the K parameter given by Ra2/Db2.
         Gain set to 1 if twr_type == 0.
@@ -181,10 +181,6 @@ class UwbCalibrate(object):
         --------
         np.array: The K values for all the measurements.
         """
-        initiating_id = self.tag_ids[initiating_idx]
-        target_id = self.tag_ids[target_idx]
-        pair = (initiating_id, target_id)
-
         Ra2 = self.time_intervals[pair]["Ra2"]
         Db2 = self.time_intervals[pair]["Db2"]
 
@@ -193,7 +189,7 @@ class UwbCalibrate(object):
         else:
             return Ra2 / Ra2
 
-    def _setup_A_matrix(self, K, initiating_idx, target_idx):
+    def _setup_A_matrix(self, pair, tags, K):
         """
         Calculates the A matrix for the linear least-squares problem.
 
@@ -210,14 +206,17 @@ class UwbCalibrate(object):
         --------
         2D np.array: The A matrix.
         """
+        initiating_idx = tags.index(pair[0])
+        target_idx = tags.index(pair[1]) 
+
         n = len(K)
-        A = np.zeros((n, 3))
+        A = np.zeros((n, len(tags)))
         A[:, initiating_idx] += 0.5
         A[:, target_idx] = 0.5 * K
 
         return A
 
-    def _setup_b_vector(self, K, initiating_idx, target_idx):
+    def _setup_b_vector(self, pair, K):
         """
         Calculates the b vector for the linear least-squares problem.
 
@@ -234,10 +233,6 @@ class UwbCalibrate(object):
         --------
         np.array: The b vector.
         """
-        initiating_id = self.tag_ids[initiating_idx]
-        target_id = self.tag_ids[target_idx]
-        pair = (initiating_id, target_id)
-
         gt = self.time_intervals[pair]["r_gt"]
         Ra1 = self.time_intervals[pair]["Ra1"]
         Db1 = self.time_intervals[pair]["Db1"]
@@ -261,15 +256,21 @@ class UwbCalibrate(object):
         --------
         np.array: The solution to the Ax=b problem.
         """
-        return np.linalg.lstsq(A, b)
+        # return np.linalg.lstsq(A, b)
+        n = A.shape[1]
+        return least_squares(self._cost_func, np.zeros(n), loss='cauchy', f_scale=0.1, args=(A,b.T))
+
+    @staticmethod
+    def _cost_func(x,A,b):
+        return (A@x - b).reshape(-1,)
 
     def filter_data(self, Q, R, visualize=False):
         if visualize:
             num_of_pairs = len(self.time_intervals)
-            fig, axs = plt.subplots(num_of_pairs)
+            fig, axs = plt.subplots(num_of_pairs, sharey='all', sharex='all')
 
         for lv0, pair in enumerate(self.tag_pairs):
-            x_hist, P_hist = self._clock_filter(pair, Q, R)
+            x_hist, P_hist, kf_outliers_idx = self._clock_filter(pair, Q, R)
             
             self._update_tof_intervals(pair, x_hist[0,:])
 
@@ -283,7 +284,7 @@ class UwbCalibrate(object):
                 y2 = Db2 - Ra2
                 y_tau = - y1 - 0.5*(Db1/(Db2-Db1))*y2
 
-                self._plot_kf(x_hist, P_hist, axs[lv0], y_tau)
+                self._plot_kf(x_hist, P_hist, axs[lv0], y_tau, kf_outliers_idx)
 
         if visualize:
             plt.show()
@@ -301,8 +302,9 @@ class UwbCalibrate(object):
                 = self.time_intervals[pair]["tof3"] + tau
 
     @staticmethod
-    def _plot_kf(x, P, axs, y_tau):
-        axs.plot(x[0,:]-y_tau)
+    def _plot_kf(x, P, axs, y_tau, outliers):
+        inliers = ~outliers
+        axs.plot(x[0,inliers]-y_tau[inliers])
 
         axs.ticklabel_format(style='plain')
         
@@ -324,13 +326,15 @@ class UwbCalibrate(object):
         n = dt.size
         x_hist = np.zeros((2,n))
         P_hist = np.zeros((2,2,n))
+        kf_outliers_idx = np.zeros((n,), dtype=bool)
 
         # Initial estimate and uncertainty
         tau = 0
         skew = 0
         x = np.array([tau, skew])
         x = x.reshape(2,1)
-        P = np.array(([1e24,0],[0,1e24])) # TODO: better estimate of initial uncertainty
+        P = np.array(([1e18,0],[0,1e9])) # TODO: better estimate of initial uncertainty
+        # P = np.array(([1,0],[0,1])) # TODO: better estimate of initial uncertainty
 
         for lv0, dt_iter in enumerate(dt):
             Ra2_iter = Ra2[lv0]
@@ -344,13 +348,20 @@ class UwbCalibrate(object):
                 P = 0.5*(P + P.T)
 
             y = self._compute_pseudomeasurement(Ra2_iter, Db2_iter, S1_iter, S2_iter, Db1_iter)
-            x, P = self._correct_clocks(x, P, y, R, Db1_iter, Db2_iter)
-            P = 0.5*(P + P.T)
+            x_temp, P_temp, reject = self._correct_clocks(x, P, y, R, Db1_iter, Db2_iter)
 
+            if reject:
+                kf_outliers_idx[lv0] = True
+            else:
+                P = 0.5*(P + P.T)
+
+                x = x_temp
+                P = P_temp
+            
             x_hist[:,lv0] = x.reshape(2,)
-            P_hist[:,:,lv0] = P
-
-        return x_hist, P_hist
+            P_hist[:,:,lv0] = P    
+            
+        return x_hist, P_hist, kf_outliers_idx
 
     @staticmethod
     def _compute_pseudomeasurement(Ra2, Db2, S1, S2, Db1):
@@ -371,13 +382,22 @@ class UwbCalibrate(object):
         # R_matrix = np.array([[1.25*R, 0.5*R], [0.5*R, 2*R]])
         R_matrix = R
 
+        # NIS Test
+        innovation = y - y_check
         S = C @ P @ C.T + R_matrix
-        K = P @ C.T @ inv(S)
+        eps = innovation.T @ inv(S) @ innovation
+        if eps > 10:
+            reject = True
+            x_new = []
+            P_new = []
+        else:
+            K = P @ C.T @ inv(S)
 
-        x_new = x + K @ (y - y_check)
-        P_new = (np.eye(2) - K @ C) @ P
+            reject = False
+            x_new = x + K @ innovation
+            P_new = (np.eye(2) - K @ C) @ P    
 
-        return x_new, P_new
+        return x_new, P_new, reject
 
     @staticmethod
     def _propagate_clocks(x, P, dt, Q):
@@ -386,7 +406,7 @@ class UwbCalibrate(object):
         L = np.array(([dt, 0.5*dt**2], [0, dt]))
 
         x_new = A @ x
-        P_new = A @ P @ A.T + L @ Q @ L.T
+        P_new = A @ P @ A.T + L @ Q @ L.T / dt
         
         return x_new, P_new
 
@@ -417,7 +437,7 @@ class UwbCalibrate(object):
             bias_std = std_spl(lifted_pr)
 
             # Fit spline
-            spl = UnivariateSpline(lifted_pr, bias)
+            spl = UnivariateSpline(lifted_pr, bias,k=3)
             bias_fit = spl(lifted_pr)
 
             # Remove outliers
@@ -440,21 +460,49 @@ class UwbCalibrate(object):
 
         return spl, std_spl, bias, lifted_pr
 
-    def fit_model(self, std_window=50, chi_thresh=10.8):
-        num_pairs = len(self.ts_data)
-        fig, axs = plt.subplots(3,num_pairs)
-        fig2, axs2 = plt.subplots(1) 
-        fig3, axs3 = plt.subplots(num_pairs) 
+    def fit_model(self, std_window=50, chi_thresh=10.8, merge_pairs=False):
+        
+        if merge_pairs:
+            sorted_pairs = [tuple(sorted(i)) for i in self.tag_pairs]
+            addressed_pairs = list(set(sorted_pairs))
+            for i, pair in enumerate(addressed_pairs):
+                if pair not in self.tag_pairs:
+                    addressed_pairs[i] = pair[::-1]
+        else:
+            addressed_pairs = self.tag_pairs
+
+        num_pairs = len(addressed_pairs)
+        # fig, axs = plt.subplots(3,num_pairs,sharey='row')
+        fig, axs = plt.subplots(4,int(np.ceil((num_pairs+1)/4)),sharey='all',sharex='all')
+        fig2, axs2 = plt.subplots(2,1) 
+        fig3, axs3 = plt.subplots(4,int(np.ceil((num_pairs+1)/4)),sharey='all',sharex='all') 
         fig3.suptitle(r"Outlier rejection")
+        axs[0,0].set_ylabel(r"Bias [m]")
 
-        self.mean_spline = {pair:[] for pair in self.ts_data}
+        self.mean_spline = {pair:[] for pair in addressed_pairs}
+        self.std_spline = {pair:[] for pair in addressed_pairs}
 
-        for lv0, pair in enumerate(self.tag_pairs):
+        self._all_spline_data = {'lifted_pr_trunc': np.empty(0),
+                                 'lifted_pr': np.empty(0),
+                                 'bias': np.empty(0),
+                                 'std': np.empty(0)}
+
+        for lv0, pair in enumerate(addressed_pairs):
             range = self.compute_range_meas(pair)
             bias = range - self.time_intervals[pair]["r_gt"]
-            lifted_pr = self.lift(0.5*self.ts_data[pair][:,self.Pr1_idx] \
-                                  + 0.5*self.ts_data[pair][:,self.Pr2_idx])
+            lifted_pr = 0.5*self.lift(self.ts_data[pair][:,self.fpp1_idx]) \
+                        + 0.5*self.lift(self.ts_data[pair][:,self.fpp2_idx])
             r_gt_unsorted = self.time_intervals[pair]["r_gt"]
+
+            if merge_pairs and pair[::-1] in self.tag_pairs:
+                opposite_pair = pair[::-1]
+                range_new = self.compute_range_meas(opposite_pair)
+                range = np.append(range, range_new)
+                bias = np.append(bias, range_new - self.time_intervals[opposite_pair]["r_gt"])
+                lifted_pr = np.append(lifted_pr, 
+                                      0.5*self.lift(self.ts_data[opposite_pair][:,self.fpp1_idx]) \
+                                      + 0.5*self.lift(self.ts_data[opposite_pair][:,self.fpp2_idx]))
+                r_gt_unsorted = np.append(r_gt_unsorted, self.time_intervals[opposite_pair]["r_gt"])
 
             pr_thresh = 2
             bias = bias[lifted_pr < pr_thresh]
@@ -468,42 +516,104 @@ class UwbCalibrate(object):
             r_gt = r_gt_unsorted[sort_pr]
 
             spl, std_spl, bias_trunc, lifted_pr_trunc \
-                        = self._reject_outliers(bias, lifted_pr, std_window, chi_thresh, axs3[lv0])
+                        = self._reject_outliers(bias, lifted_pr, std_window, chi_thresh, axs3[np.mod(lv0,4),int(np.floor(lv0/4))])
             self.mean_spline[pair] = spl
+            self.std_spline[pair] = std_spl
             bias_std = std_spl(lifted_pr)
             bias_fit = spl(lifted_pr)
 
+            # Save the fit data 
+            self._all_spline_data['lifted_pr_trunc'] = np.append(self._all_spline_data['lifted_pr_trunc'], lifted_pr_trunc)
+            self._all_spline_data['lifted_pr'] = np.append(self._all_spline_data['lifted_pr'], lifted_pr)
+            self._all_spline_data['bias'] = np.append(self._all_spline_data['bias'], bias_trunc)
+            self._all_spline_data['std'] = np.append(self._all_spline_data['std'], bias_std)
+
             ### PLOT 1 ###
-            axs[0,lv0].scatter(lifted_pr_trunc, bias_trunc, label=r"Raw data", linestyle="dotted", s=1)
-            axs[0,lv0].plot(lifted_pr, bias_fit, label=r"Fit")
-            axs[0,lv0].fill_between(
+            axs[np.mod(lv0,4),int(np.floor(lv0/4))].scatter(lifted_pr_trunc, bias_trunc, label=r"Raw data", linestyle="dotted", s=1)
+            axs[np.mod(lv0,4),int(np.floor(lv0/4))].plot(lifted_pr, bias_fit, label=r"Fit")
+            axs[np.mod(lv0,4),int(np.floor(lv0/4))].fill_between(
                 lifted_pr.ravel(),
-                bias_fit - 1.96 * bias_std,
-                bias_fit + 1.96 * bias_std,
+                bias_fit - 3 * bias_std,
+                bias_fit + 3 * bias_std,
                 alpha=0.5,
-                label=r"95% confidence interval",
+                label=r"99.97% confidence interval",
             )
-            axs[0,lv0].set_xlabel(r"$f(P_r)$")
-            axs[0,lv0].set_ylabel(r"Bias [m]")
-
-            ## Visualize std vs. Power
-            axs[1,lv0].plot(lifted_pr, bias_std)
-            axs[1,lv0].set_xlabel(r"$f(P_r)$")
-            axs[1,lv0].set_ylabel(r"Bias std [m]")
-
-            ## Visualize std vs. distance
-            axs[2,lv0].scatter(r_gt, bias_std, s=1)
-            axs[2,lv0].set_xlabel(r"Ground truth distance [m]")
-            axs[2,lv0].set_ylabel(r"Bias std [m]")
+            axs[np.mod(lv0,4),int(np.floor(lv0/4))].set_xlabel(r"$f(P_r)$")
+            
+            # ## Visualize std vs. distance
+            # axs[2,lv0].scatter(r_gt, bias_std, s=1)
+            # axs[2,lv0].set_xlabel(r"Ground truth distance [m]")
 
             ### PLOT 2 ### Plot with all splines
-            axs2.plot(lifted_pr, bias_fit, label=r"Pair "+str(pair))
-            axs2.legend()
-            axs2.set_xlabel(r"$f(P_r)$")
-            axs2.set_ylabel(r"Bias [m]")
+            axs2[0].plot(lifted_pr, bias_fit, label=r"Pair "+str(pair))
+            axs2[0].legend(loc='upper right')
+            axs2[0].set_xlabel(r"$f(P_r)$")
+            axs2[0].set_ylabel(r"Bias [m]")
             fig2.suptitle(r"Bias-Power Fit")
 
+            axs2[1].plot(lifted_pr, bias_std, label=r"Pair "+str(pair))
+            axs2[1].legend()
+            axs2[1].set_xlabel(r"$f(P_r)$")
+            axs2[1].set_ylabel(r"Bias Std [m]")
+
         axs[0,-1].legend()
+
+        # Sort stored fit data
+        sort_pr = np.argsort(self._all_spline_data['lifted_pr_trunc'])
+        self._all_spline_data['lifted_pr_trunc'] = self._all_spline_data['lifted_pr_trunc'][sort_pr]
+        self._all_spline_data['bias'] = self._all_spline_data['bias'][sort_pr]
+        self._all_spline_data['std'] = self._all_spline_data['std'][sort_pr]
+
+        sort_pr = np.argsort(self._all_spline_data['lifted_pr'])
+        self._all_spline_data['lifted_pr'] = self._all_spline_data['lifted_pr'][sort_pr]
+
+        # Fit a spline to the full dataset as well (i.e., not split by pairs)
+        bias_std = np.std(self._rolling_window(self._all_spline_data['bias'].ravel(), std_window), axis=-1)
+        std_spl = UnivariateSpline(self._all_spline_data['lifted_pr_trunc'], bias_std, k=3)
+        bias_std = std_spl(self._all_spline_data['lifted_pr'])
+
+        # Fit spline
+        spl = UnivariateSpline(self._all_spline_data['lifted_pr_trunc'], self._all_spline_data['bias'])
+        bias_fit = spl(self._all_spline_data['lifted_pr'])
+
+        spl, std_spl, bias_trunc, lifted_pr_trunc \
+                        = self._reject_outliers(self._all_spline_data['bias'], 
+                                                self._all_spline_data['lifted_pr_trunc'], 
+                                                std_window, 
+                                                chi_thresh, 
+                                                axs3[np.mod(lv0+1,4),int(np.floor((lv0+1)/4))])
+
+        bias_std = std_spl( self._all_spline_data['lifted_pr'])
+        bias_fit = spl( self._all_spline_data['lifted_pr'])
+
+        axs[np.mod(lv0+1,4),int(np.floor((lv0+1)/4))].scatter(lifted_pr_trunc,
+                                                            bias_trunc, 
+                                                            label=r"Raw data", 
+                                                            linestyle="dotted", 
+                                                            s=1)
+        axs[np.mod(lv0+1,4),int(np.floor((lv0+1)/4))].plot( self._all_spline_data['lifted_pr'], bias_fit, label=r"Fit")
+        axs[np.mod(lv0+1,4),int(np.floor((lv0+1)/4))].fill_between(
+             self._all_spline_data['lifted_pr'].ravel(),
+            bias_fit - 3 * bias_std,
+            bias_fit + 3 * bias_std,
+            alpha=0.5,
+            label=r"99.97% confidence interval",
+        )
+        axs[np.mod(lv0+1,4),int(np.floor((lv0+1)/4))].set_xlabel(r"$f(P_r)$")
+
+        axs2[0].plot(self._all_spline_data['lifted_pr'], bias_fit, label=r"All", linewidth=3)
+        axs2[0].legend(loc='upper right')
+        axs2[0].set_xlabel(r"$f(P_r)$")
+        axs2[0].set_ylabel(r"Bias [m]")
+        fig2.suptitle(r"Bias-Power Fit")
+
+        axs2[1].plot(self._all_spline_data['lifted_pr'], bias_std, label=r"All", linewidth=3)
+        axs2[1].legend()
+        axs2[1].set_xlabel(r"$f(P_r)$")
+        axs2[1].set_ylabel(r"Bias Std [m]")
+
+        self.spl = spl
+        self.std_spl = std_spl
 
     def calibrate_antennas(self):
         """
@@ -515,39 +625,31 @@ class UwbCalibrate(object):
             Module i: (float)
                 Antenna delay for tag i
         """
-        K1 = self._calculate_skew_gain(0, 1)
-        A1 = self._setup_A_matrix(K1, 0, 1)
-        b1 = self._setup_b_vector(K1, 0, 1)
+        tags = sum(list(self.tag_ids.values()),[])
 
-        K2 = self._calculate_skew_gain(0, 2)
-        A2 = self._setup_A_matrix(K2, 0, 2)
-        b2 = self._setup_b_vector(K2, 0, 2)
-
-        K3 = self._calculate_skew_gain(1, 2)
-        A3 = self._setup_A_matrix(K3, 1, 2)
-        b3 = self._setup_b_vector(K3, 1, 2)
-
-        A = np.vstack((A1, A2, A3))
-        b = np.vstack((b1, b2, b3))
+        A = np.zeros((0,len(tags)))
+        b = np.zeros((0,1))
+        for pair in self.tag_pairs:
+            K = self._calculate_skew_gain(pair)
+            A = np.vstack((A, self._setup_A_matrix(pair, tags, K)))
+            b = np.vstack((b, self._setup_b_vector(pair, K)))
 
         nan_idx = ~np.isnan(b)
         nan_idx = nan_idx.flatten()
         A = A[nan_idx, :]
         b = b[nan_idx]
 
-        x = self._solve_for_antenna_delays(A, b)[0]
+        x = self._solve_for_antenna_delays(A, b)['x']
         x = x.flatten()
 
         print(np.linalg.norm(b))
-        print(np.linalg.norm(b - A * np.array([x[0], x[1], x[2]])))
+        print(np.linalg.norm(b.T - A @ x))
 
-        return {
-            self.tag_ids[0]: x[0],
-            self.tag_ids[1]: x[1],
-            self.tag_ids[2]: x[2],
-        }
+        self.delays = x
 
-    def correct_antenna_delay(self, id, delay):
+        return {id: x[i] for i,id in enumerate(tags)}
+
+    def correct_antenna_delay(self, delays_dict):
         """
         Modifies the data of this object to correct for the antenna delay of a
         specific module.
@@ -562,13 +664,16 @@ class UwbCalibrate(object):
         TODO: What about D1 and D2? This seems to be a problem.
               We might have to calibrate for TX and RX delays separately
               if we are to proceed with Kalman filtering with this architecture.
-        TODO: tof1, tof2, and tof3 as well, once individual delays are take into consideration.
+        TODO: tof1, tof2, and tof3 as well, once individual delays are taken into consideration.
+        TODO: access delays from self object
         """
-        for key in self.time_intervals:
-            if key[0] == id:
-                self.time_intervals[key]["Ra1"] += delay
-            elif key[1] == id:
-                self.time_intervals[key]["Db1"] -= delay
+        for id in delays_dict.keys():
+            delay = delays_dict[id]
+            for pair in self.time_intervals:
+                if pair[0] == id:
+                    self.time_intervals[pair]["Ra1"] += delay
+                elif pair[1] == id:
+                    self.time_intervals[pair]["Db1"] -= delay
 
     def compute_range_meas(self, pair=(1,2), visualize=False, owr = False):
         # TODO: Inherit this function from PostProcess?
@@ -599,3 +704,13 @@ class UwbCalibrate(object):
             axs.set_ylim([-1, 5])
 
         return range
+
+    def save_calib_results(self):
+        calib_results = {
+                        'delays': self.delays,
+                        'bias_spl': self.spl,
+                        'std_spl': self.std_spl,
+                        }
+
+        with open("calib_results.pickle","wb") as file:
+            pickle.dump(calib_results, file)
