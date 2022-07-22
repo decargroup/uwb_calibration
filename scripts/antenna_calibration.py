@@ -141,7 +141,7 @@ for lv0, pair_i in enumerate(calib_obj.mean_spline):
 axs[0].legend()
 plt.show(block=True)
 # %% TESTING 
-raw_obj2 = PostProcess("datasets/2022_07_07/01_line_triangle_line/merged.bag",
+raw_obj2 = PostProcess("datasets/2022_07_07/04/merged.bag",
                        tag_ids,
                        moment_arms,
                        num_meas=-1)
@@ -162,7 +162,8 @@ if antenna_delay:
 
 meas_new = calib_obj2.compute_range_meas(pair)
 avg_fpp = 0.5*(calib_obj2.ts_data[pair][:,calib_obj2.fpp1_idx] + calib_obj2.ts_data[pair][:,calib_obj2.fpp2_idx])
-lifted_pr = calib_obj2.lift(avg_fpp)
+lifted_pr = 0.5*calib_obj2.lift(calib_obj2.ts_data[pair][:,calib_obj2.fpp1_idx]) + \
+            + 0.5*calib_obj2.lift(calib_obj2.ts_data[pair][:,calib_obj2.fpp2_idx])
 meas_new -= calib_obj.spl(lifted_pr)
 
 t = calib_obj2.ts_data[pair][:,0] - calib_obj2.ts_data[pair][0,0]
@@ -187,7 +188,8 @@ axs[0].fill_between(
 axs[0].legend()
 
 avg_rxp = 0.5*(calib_obj2.ts_data[pair][:,calib_obj2.rxp1_idx] + calib_obj2.ts_data[pair][:,calib_obj2.rxp2_idx])
-lifted_rxp = calib_obj2.lift(avg_rxp)
+lifted_rxp = 0.5*calib_obj2.lift(calib_obj2.ts_data[pair][:,calib_obj2.rxp1_idx]) + \
+            + 0.5*calib_obj2.lift(calib_obj2.ts_data[pair][:,calib_obj2.rxp2_idx])
 
 axs[1].plot((t-t[0])/1e9, lifted_pr, label = r'Lifted FPP Power')
 axs[1].plot((t-t[0])/1e9, lifted_rxp, label = r'Lifted RXP Power')

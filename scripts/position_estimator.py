@@ -206,12 +206,12 @@ for machine in tag_ids:
         
         # Position spline
         r_spl = [BSpline(t_iter, r_iter[0,:], k=3),
-                    BSpline(t_iter, r_iter[1,:], k=3),
-                    BSpline(t_iter, r_iter[2,:], k=3)]
+                 BSpline(t_iter, r_iter[1,:], k=3),
+                 BSpline(t_iter, r_iter[2,:], k=3)]
         # Velocity spline
         v_spl = [r_spl[0].derivative(),
-                    r_spl[1].derivative(),
-                    r_spl[2].derivative()]
+                 r_spl[1].derivative(),
+                 r_spl[2].derivative()]
 
         # Interpolated position
         r[tag] = np.vstack((r_spl[0](t),
