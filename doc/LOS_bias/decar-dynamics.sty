@@ -1,0 +1,60 @@
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{decar-dynamics}
+
+\RequirePackage{decar-common}
+
+% ====== Custom math-mode commands ========================================== %
+
+% Reference frame
+\newcommand{\rframe}[1]{{\ensuremath{\underrightarrow{\mathcal{F}}_{#1}}}}
+% Vectrix
+\newcommand{\vectrix}[1]{\ensuremath{\underrightarrow{\boldsymbol{\mathcal{F}}}_{#1}}}
+% Null vectrix
+\newcommand{\nvectrix}{{\ensuremath{\underrightarrow{\boldsymbol{\mathcal{O}}}}}}
+% Time derivatives of physical vectors
+% TODO Why are these such a mess?
+\def\fdota{{\raisebox{-2pt}{\LARGE $\cdot$}}}
+\def\fdotb{{\raisebox{-0.6ex}{\kern0.2ex\raisebox{0.8ex}{\tiny $\hspace*{-1ex}\circ$}}}}
+\def\fddota{{\raisebox{-2pt}{\LARGE $\cdot\hspace*{-0.2ex}\cdot$}}}
+\def\fddotb{{\raisebox{-0.6ex}{ \kern0.2ex\raisebox{0.8ex}{\tiny $\hspace*{-1ex}\circ\circ$}}}}
+\newcommand{\fdot}[1]{{^{\fdota{\mbox{\scriptsize${#1}$}}}}}
+\newcommand{\fddot}[1]{{^{\fddota{\mbox{\scriptsize${#1}$}}}}}
+% Physical space
+\newcommand{\pspace}{\mathbb{P}}
+% Physical vector norm
+\newcommand{\vecnorm}[1]{||{\underrightarrow{{#1}}}||_2}
+
+% Displacements (r)
+\newcommand{\dispspace}{\,}
+% Basic displacement
+\NewDocumentCommand{\disp}{ O{} O{} }{\mbf{r}_{#2}^{\ifthenelse{\equal{#1}{}}{}{\dispspace} #1 \ifthenelse{\equal{#1}{}}{}{\dispspace}}}
+% Mean displacement
+\NewDocumentCommand{\dispbar}{ O{} O{}}{\mbfbar{r}_{#2}^{\ifthenelse{\equal{#1}{}}{}{\dispspace} #1 \ifthenelse{\equal{#1}{}}{}{\dispspace}}}
+% Prior displacement
+\NewDocumentCommand{\dispcheck}{ O{} O{} }{\mbfcheck{r}_{#2}^{\ifthenelse{\equal{#1}{}}{}{\dispspace} #1 \ifthenelse{\equal{#1}{}}{}{\dispspace}}}
+% Posterior displacement
+\NewDocumentCommand{\disphat}{ O{} O{} }{\mbfhat{r}_{#2}^{\ifthenelse{\equal{#1}{}}{}{\dispspace} #1 \ifthenelse{\equal{#1}{}}{}{\dispspace}}}
+% Derivative of displacement
+\NewDocumentCommand{\dispdot}{ O{} O{} }{\mbfdot{r}_{#2}^{\ifthenelse{\equal{#1}{}}{}{\dispspace} #1 \ifthenelse{\equal{#1}{}}{}{\dispspace}}}
+
+% Basic covariance (P)
+\newcommand{\covspace}{\,}
+\NewDocumentCommand{\Pcov}{ O{} O{} }{\mbf{P}_{#2}^{\ifthenelse{\equal{#1}{}}{}{\covspace} #1 \ifthenelse{\equal{#1}{}}{}{\covspace}}}
+% Prior covariance
+\NewDocumentCommand{\Pcovcheck}{ O{} O{} }{\mbfcheck{P}_{#2}^{\ifthenelse{\equal{#1}{}}{}{\covspace} #1 \ifthenelse{\equal{#1}{}}{}{\covspace}}}
+% Posterior covariance
+\NewDocumentCommand{\Pcovhat}{ O{} O{} }{\mbfhat{P}_{#2}^{\ifthenelse{\equal{#1}{}}{}{\covspace} #1 \ifthenelse{\equal{#1}{}}{}{\covspace}}}
+
+% ====== Commented-out garbage ============================================== %
+
+% \def\dota{{\raisebox{-2pt}{\LARGE $\cdot$}}}
+% \def\dotb{{\raisebox{-0.6ex}{ \kern0.2ex\raisebox{0.8ex}{\tiny $\circ$}}}}
+% \def\ddota{{\raisebox{-0.6ex}{ \raise0.2ex\hbox{ \LARGE $\cdot\hspace*{-0.2ex}\cdot$}}}}
+% \def\ddotb{{\raisebox{-0.6ex}{ \kern0.2ex\raisebox{0.8ex}{\tiny $\circ\circ$}}}}
+% \def\fdotb{{\raisebox{-0.6ex}{ \kern0.2ex\raisebox{0.8ex}{\tiny $\circ$}}}}
+% \def\fddota{{\raisebox{-0.6ex}{ \raise0.2ex\hbox{ \LARGE $\cdot\hspace*{-0.2ex}\cdot$}}}}
+% \def\fddotb{{\raisebox{-0.6ex}{ \kern0.2ex\raisebox{0.8ex}{\tiny $\circ\circ$}}}}
+% \newcommand{\fdot}[1]{{\fdota{#1}}}
+% \newcommand{\dota}[1]{ {#1}^{ \mbox{ \LARGE $\cdot$} } }
+% \newcommand{\fdot}[1]{{^{\fdota{\mbox{\footnotesize${#1}$}}}}}
+% \newcommand{\fddot}[1]{{^{\fddota{\mbox{\footnotesize${#1}$}}}}}

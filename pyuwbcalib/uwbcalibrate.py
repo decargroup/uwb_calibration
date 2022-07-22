@@ -1,23 +1,29 @@
 import numpy as np
+from numpy.linalg import inv
+import matplotlib.pyplot as plt
+from scipy.interpolate import UnivariateSpline
+from scipy.optimize import least_squares
+import pickle
 
 class UwbCalibrate(object):
     """
+    # TODO: Update this and subsequent documentation.
     Object to handle calibration for the DECAR/MRASL UWB modules.
 
     PARAMETERS:
     -----------
     filename_1: str
         Relative address of the file containing the timestamps of the TWR instances initiated
-        by the first board (hereafter referred to as "board i").
+        by the first tag (hereafter referred to as "tag i").
     filename_2: str
         Relative address of the file containing the timestamps of the TWR instances initiated
-        by the second board (hereafter referred to as "board j").
-    board_ids: list of ints
-        List of IDs of the three boards involved in the calibration procedure.
+        by the second tag (hereafter referred to as "tag j").
+    tag_ids: list of ints
+        List of IDs of the three tags involved in the calibration procedure.
         The order is as follows:
-            1) TWR initializer in filename_1 (board i).
-            2) TWR initializer in filename_2 (board j).
-            3) The board that never initialized a TWR instance (board k).
+            1) TWR initializer in filename_1 (tag i).
+            2) TWR initializer in filename_2 (tag j).
+            3) The tag that never initialized a TWR instance (tag k).
     average: bool
         Flag to indicate whether measurements from static intervals should be averaged out.
     static: bool
@@ -26,205 +32,164 @@ class UwbCalibrate(object):
         Threshold to detect clock wraps and outliers, in nanoseconds.
     """
 
-    _c = 299702547 # speed of light
+    _c = 299702547  # speed of light
 
-    def __init__(self, filename_1, filename_2, board_ids,
-                 average=True, static=True, thresh = 5e7):
+    def __init__(self, processed_data, rm_static=True):
         """
         Constructor
         """
-        self.files = [filename_1, filename_2]
-        self.board_ids = board_ids
-        self.average = average
-        self.static = static
-        self.twr_type = int(filename_1[-5])
-        self.thresh = thresh
+        # Retrieve attributes from processed_data
+        self.tag_ids = processed_data.tag_ids
+        self.mult_twr = processed_data.mult_twr
+        self.num_meas = processed_data.num_meas
+        self.tag_pairs = processed_data.tag_pairs
+        self.num_of_tags = processed_data.num_of_tags
 
-        self.data = {}
+        if rm_static:
+            self.ts_data = {}
+            self.time_intervals = {}
+            self.ts_data, self.time_intervals \
+                = self._remove_static_regions(processed_data.ts_data, processed_data.time_intervals)
+        else:
+            self.ts_data = processed_data.ts_data
+            self.time_intervals = processed_data.time_intervals
 
-        # Boards i and j
-        str_temp = str(board_ids[0]) + "->" + str(board_ids[1])
-        self.data[str_temp] = self._extract_data(self.files[0], 0, 1)
+        self.range_idx = 2
+        self.tx1_idx = 3
+        self.rx1_idx = 4
+        self.tx2_idx = 5
+        self.rx2_idx = 6
+        self.tx3_idx = 7
+        self.rx3_idx = 8
+        self.fpp1_idx = 9
+        self.fpp2_idx = 10
+        self.rxp1_idx = 11
+        self.rxp2_idx = 12
+        self.std1_idx = 13
+        self.std2_idx = 14
 
-        # Boards i and k
-        str_temp = str(board_ids[0]) + "->" + str(board_ids[2])
-        self.data[str_temp] = self._extract_data(self.files[0], 0, 2)
+        self.lift = processed_data.lift
 
-        # Boards j and k
-        str_temp = str(board_ids[1]) + "->" + str(board_ids[2])
-        self.data[str_temp] = self._extract_data(self.files[1], 1, 2)
-
-    def _extract_data(self, filename, master_idx, slave_idx):
-        """
-        Reads the stored data and stores it in a dictionary for further processing.
-
-        PARAMETERS:
-        -----------
-        filename: str
-            Relative address of the file containing the timestamps of the TWR instances initiated
-            by the board referred to here as the master.
-        master_idx: int
-            The index of the master board (initiator) in self.board_ids.
-        slave_idx: int
-            The index of the slave board in self.board_ids.
-
-        RETURNS:
-        --------
-        dict: A dictionary with the following fields 
-            master_id: int
-                ID of the master board.
-            slave_id: int
-                ID of the slave board.
-            gt: np.array
-                Ground truth data.
-            Ra1: np.array
-                The delta rx2-tx1 in the master board's clock.
-            Ra2: np.array
-                The delta rx3-rx2 in the master board's clock.
-            Db1: np.array
-                The delta tx2-rx1 in the slave board's clock.
-            Db2: np.array
-                The delta tx3-tx2 in the slave board's clock.
-        """
-        dict = {"master_id": self.board_ids[master_idx], "slave_id": self.board_ids[slave_idx]}
-
-        idx_diff = slave_idx - master_idx # this is used to determine how many columns to skip
-        first_column = 2 + 11*(idx_diff-1)
-        last_column = first_column + 9
-        # Always read the first column to assert that the master board id is right
-        columns_to_read = np.concatenate((np.array([0]), np.arange(first_column,last_column)))
-
-        # Read the file
-        my_data = np.genfromtxt(filename, delimiter=',', skip_header=1, 
-                                usecols=tuple(columns_to_read))
+    def _remove_static_regions(self, ts_data, time_intervals):
+        '''
+        Remove the static region in the extremes.
+        '''
+        lower_idxs, upper_idxs = self._find_static_extremes(ts_data, time_intervals)
         
-        # Ensure right modules are communicating
-        assert(my_data[0,0] == dict["master_id"])
-        assert(my_data[0,1] == dict["slave_id"])
+        num_columns = 15
+        num_rows = lambda pair: upper_idxs[pair] - lower_idxs[pair] 
+        ts_data_trunc = {pair:np.zeros((num_rows(pair), num_columns)) for \
+                                                                pair in ts_data}
+        time_intervals_trunc = {pair:{} for pair in ts_data}
 
-        gt = np.array([])
-        Ra1 = np.array([])
-        Ra2 = np.array([])
-        Db1 = np.array([])
-        Db2 = np.array([])
-
-        # Average the static intervals if required
-        if self.static is True and self.average is True:
-            gap_idx = self._find_mocap_gaps(my_data[:,2])
-            gap_idx = [0] + gap_idx + [np.size(my_data[:,2])] # pad the indices with the start and the end
-
-            # Loop and average out sections of static formations
-            for idx in range(len(gap_idx)-1):
-                idx_beg = gap_idx[idx]
-                idx_end = gap_idx[idx+1]
-                
-                # Ground truth
-                gt = np.append(gt, np.mean(my_data[idx_beg:idx_end,3]))
-
-                # Time stamps 
-                tx1 = my_data[idx_beg:idx_end,4]
-                rx1 = my_data[idx_beg:idx_end,5]
-                tx2 = my_data[idx_beg:idx_end,6]
-                rx2 = my_data[idx_beg:idx_end,7]
-                tx3 = my_data[idx_beg:idx_end,8]
-                rx3 = my_data[idx_beg:idx_end,9]
-
-                Ra1 = np.append(Ra1, np.mean(rx2 - tx1))
-                Ra2 = np.append(Ra2, np.mean(rx3 - rx2))
-                Db1 = np.append(Db1, np.mean(tx2 - rx1))
-                Db2 = np.append(Db2, np.mean(tx3 - tx2))
-
-        elif self.static is True: # Otherwise, average out only the ground truth if static 
-            gt = my_data[:,3]
+        for pair in ts_data:
+            l_idx = lower_idxs[pair]
+            u_idx = upper_idxs[pair]
             
-            tx1 = my_data[:,4]
-            rx1 = my_data[:,5]
-            tx2 = my_data[:,6]
-            rx2 = my_data[:,7]
-            tx3 = my_data[:,8]
-            rx3 = my_data[:,9]
+            for column in range(0,num_columns):
+                ts_data_trunc[pair][:,column] \
+                    = ts_data[pair][:,column][l_idx:u_idx]
 
-            Ra1 = rx2 - tx1
-            Ra2 = rx3 - rx2
-            Db1 = tx2 - rx1
-            Db2 = tx3 - tx2
+            for topic in time_intervals[pair]:
+                time_intervals_trunc[pair][topic] \
+                    = time_intervals[pair][topic][l_idx:u_idx]
 
-        # Correct clock wrap affecting measurements
-        Ra1[Ra1<-self.thresh] = Ra1[Ra1<-self.thresh] + 1e9
-        Ra2[Ra2<-self.thresh] = Ra2[Ra2<-self.thresh] + 1e9
-        Db1[Db1<-self.thresh] = Db1[Db1<-self.thresh] + 1e9
-        Db2[Db2<-self.thresh] = Db2[Db2<-self.thresh] + 1e9
+        return ts_data_trunc, time_intervals_trunc
 
-        # Remove outliers
-        idx_rows = (np.abs(Ra1)>self.thresh).flatten()
-        idx_rows = np.logical_or(idx_rows,(np.abs(Ra2)>self.thresh).flatten())
-        idx_rows = np.logical_or(idx_rows,(np.abs(Db1)>self.thresh).flatten())
-        idx_rows = np.logical_or(idx_rows,(np.abs(Db2)>self.thresh).flatten())
-        idx_rows = idx_rows.flatten()
+    @staticmethod
+    def _find_static_extremes(ts_data, time_intervals):
+        lower_idxs = {pair:[] for pair in ts_data}
+        upper_idxs = {pair:[] for pair in ts_data}
         
-        gt = np.delete(gt,idx_rows,0)
-        Ra1 = np.delete(Ra1,idx_rows,0)
-        Ra2 = np.delete(Ra2,idx_rows,0)
-        Db1 = np.delete(Db1,idx_rows,0)
-        Db2 = np.delete(Db2,idx_rows,0)
+        thresh = 0.2
 
-        # Record ground truth and recorded time-stamps
-        dict['gt'] = gt
-        dict['Ra1'] = Ra1
-        dict['Ra2'] = Ra2
-        dict['Db1'] = Db1
-        dict['Db2'] = Db2
+        for pair in ts_data:
+            gt = time_intervals[pair]['r_gt']
+            
+            # Lower bound
+            p1 = gt[0]
+            p2 = gt[100]
+            p3 = gt[200]
 
-        return dict
+            mean = (p1+p2+p3)/3
+            cond1 = np.abs(p1 - mean) > thresh
+            cond2 = np.abs(p2 - mean) > thresh
+            cond3 = np.abs(p3 - mean) > thresh
+            if cond1 or cond2 or cond3:
+                lower_idxs[pair] = 0
+            else:
+                mean = np.mean(gt[:200])
+                deviation = gt - mean
+                deviation_bool = deviation > thresh
 
-    def _find_mocap_gaps(self,mocap_ts):
+                # Find the first 2 consecutive true values
+                found_idx = False
+                for lv0 in range(401, len(gt)-5):
+                    cond = np.all(deviation_bool[lv0:lv0+2])
+                    if cond:
+                        lower_idxs[pair] = lv0
+                        found_idx = True
+                        break
+
+                if not found_idx:
+                    lower_idxs[pair] = 0
+
+            # Upper bound
+            p1 = gt[-1]
+            p2 = gt[-100]
+            p3 = gt[-200]
+
+            mean = (p1+p2+p3)/3
+            cond1 = np.abs(p1 - mean) > thresh
+            cond2 = np.abs(p2 - mean) > thresh
+            cond3 = np.abs(p3 - mean) > thresh
+            if cond1 or cond2 or cond3:
+                upper_idxs[pair] = len(gt)
+            else:
+                mean = np.mean(gt[-200:])
+                deviation = gt - mean
+                deviation_bool = deviation > thresh
+
+                # Find the first 2 consecutive true values
+                found_idx = False
+                for lv0 in range(-401, -len(gt)+5):
+                    cond = np.all(deviation_bool[lv0:lv0-2])
+                    if cond:
+                        upper_idxs[pair] = lv0
+                        found_idx = True
+                        break
+
+                if not found_idx:
+                    upper_idxs[pair] = len(gt)
+
+        return lower_idxs, upper_idxs
+ 
+
+    def _calculate_skew_gain(self, pair):
         """
-        Finds time gaps in the Mocap data to indicate a change in the static formation.
-
-        PARAMETERS:
-        -----------
-        mocap_ts: np.array
-            The timestamps recorded from the Mocap.
-
-        RETURNS:
-        --------
-        list of ints: The indices of the measurements corresponding to the beginning of a new formation.
-        """
-        diff_ts = np.abs(mocap_ts[1:] - mocap_ts[:-1])
-        gap = diff_ts > 10E7
-        gap_idx = np.argwhere(gap)+1
-        gap_idx = gap_idx.flatten()
-
-        return gap_idx.tolist()
-
-    def _calculate_skew_gain(self,master_idx,slave_idx):
-        """
-        Calculates the K parameter given by Ra2/Db2. 
+        Calculates the K parameter given by Ra2/Db2.
         Gain set to 1 if twr_type == 0.
 
         PARAMETERS:
         -----------
-        master_idx: int
-            The index of the master board (initiator) in self.board_ids.
-        slave_idx: int
-            The index of the slave board in self.board_ids.
+        initiating_idx: int
+            The index of the initiating tag (initiator) in self.tag_ids.
+        target_idx: int
+            The index of the target tag in self.tag_ids.
 
         RETURNS:
         --------
         np.array: The K values for all the measurements.
         """
-        str_temp = str(self.board_ids[master_idx]) + "->" + str(self.board_ids[slave_idx])
-        data = self.data[str_temp]
+        Ra2 = self.time_intervals[pair]["Ra2"]
+        Db2 = self.time_intervals[pair]["Db2"]
 
-        Ra2 = data["Ra2"]
-        Db2 = data["Db2"]
-
-        if self.twr_type == 0:
-            return Ra2/Ra2
+        if self.mult_twr:
+            return Ra2 / Db2
         else:
-            return Ra2/Db2
+            return Ra2 / Ra2
 
-    def _setup_A_matrix(self,K,master_idx,slave_idx):
+    def _setup_A_matrix(self, pair, tags, K):
         """
         Calculates the A matrix for the linear least-squares problem.
 
@@ -232,23 +197,26 @@ class UwbCalibrate(object):
         -----------
         K: np.array
             The skew gain K.
-        master_idx: int
-            The index of the master board (initiator) in self.board_ids.
-        slave_idx: int
-            The index of the slave board in self.board_ids.
+        initiating_idx: int
+            The index of the initiating tag (initiator) in self.tag_ids.
+        target_idx: int
+            The index of the target tag in self.tag_ids.
 
         RETURNS:
         --------
         2D np.array: The A matrix.
         """
+        initiating_idx = tags.index(pair[0])
+        target_idx = tags.index(pair[1]) 
+
         n = len(K)
-        A = np.zeros((n,3))
-        A[:,master_idx] += 0.5
-        A[:,slave_idx] = 0.5*K
-        
+        A = np.zeros((n, len(tags)))
+        A[:, initiating_idx] += 0.5
+        A[:, target_idx] = 0.5 * K
+
         return A
 
-    def _setup_b_vector(self,K,master_idx,slave_idx):
+    def _setup_b_vector(self, pair, K):
         """
         Calculates the b vector for the linear least-squares problem.
 
@@ -256,27 +224,24 @@ class UwbCalibrate(object):
         -----------
         K: np.array
             The skew gain K.
-        master_idx: int
-            The index of the master board (initiator) in self.board_ids.
-        slave_idx: int
-            The index of the slave board in self.board_ids.
+        initiating_idx: int
+            The index of the initiating tag (initiator) in self.tag_ids.
+        target_idx: int
+            The index of the target tag in self.tag_ids.
 
         RETURNS:
         --------
         np.array: The b vector.
         """
-        str_temp = str(self.board_ids[master_idx]) + "->" + str(self.board_ids[slave_idx])
-        data = self.data[str_temp]
+        gt = self.time_intervals[pair]["r_gt"]
+        Ra1 = self.time_intervals[pair]["Ra1"]
+        Db1 = self.time_intervals[pair]["Db1"]
 
-        gt = data["gt"]
-        Ra1 = data["Ra1"]
-        Db1 = data["Db1"]
+        b = 1 / self._c * gt * 1e9 - 0.5 * (Ra1) + 0.5 * K * (Db1)
 
-        b = 1/self._c*gt*1e9 - 0.5*(Ra1) + 0.5*K*(Db1)
+        return np.reshape(b, (len(K), 1))
 
-        return np.reshape(b, (len(K),1))
-
-    def _solve_for_antenna_delays(self,A,b):
+    def _solve_for_antenna_delays(self, A, b):
         """
         Solves the linear least-squares problem.
 
@@ -291,7 +256,364 @@ class UwbCalibrate(object):
         --------
         np.array: The solution to the Ax=b problem.
         """
-        return np.linalg.lstsq(A,b)
+        # return np.linalg.lstsq(A, b)
+        n = A.shape[1]
+        return least_squares(self._cost_func, np.zeros(n), loss='cauchy', f_scale=0.1, args=(A,b.T))
+
+    @staticmethod
+    def _cost_func(x,A,b):
+        return (A@x - b).reshape(-1,)
+
+    def filter_data(self, Q, R, visualize=False):
+        if visualize:
+            num_of_pairs = len(self.time_intervals)
+            fig, axs = plt.subplots(num_of_pairs, sharey='all', sharex='all')
+
+        for lv0, pair in enumerate(self.tag_pairs):
+            x_hist, P_hist, kf_outliers_idx = self._clock_filter(pair, Q, R)
+            
+            self._update_tof_intervals(pair, x_hist[0,:])
+
+            if visualize: 
+                Ra2 = self.time_intervals[pair]["Ra2"]
+                Db2 = self.time_intervals[pair]["Db2"]
+                S1 = self.time_intervals[pair]["S1"]
+                S2 = self.time_intervals[pair]["S2"]
+                Db1 = self.time_intervals[pair]["Db1"]
+                y1 = 0.5*(S1 - S2)
+                y2 = Db2 - Ra2
+                y_tau = - y1 - 0.5*(Db1/(Db2-Db1))*y2
+
+                self._plot_kf(x_hist, P_hist, axs[lv0], y_tau, kf_outliers_idx)
+
+        if visualize:
+            plt.show()
+
+    def _update_tof_intervals(self, pair, tau):
+        # TODO: Take uncertainty into consideration?
+        self.time_intervals[pair]["tof1"] \
+            = self.time_intervals[pair]["tof1"] - tau
+
+        self.time_intervals[pair]["tof2"] \
+            = self.time_intervals[pair]["tof2"] + tau
+
+        if self.mult_twr:
+            self.time_intervals[pair]["tof3"] \
+                = self.time_intervals[pair]["tof3"] + tau
+
+    @staticmethod
+    def _plot_kf(x, P, axs, y_tau, outliers):
+        inliers = ~outliers
+        axs.plot(x[0,inliers]-y_tau[inliers])
+
+        axs.ticklabel_format(style='plain')
+        
+        P_iter = P[1,1,:]
+        P_iter = P_iter.reshape(-1,)
+        axs.plot(x[0,:] + 3*np.sqrt(P_iter))
+        axs.plot(x[0,:] - 3*np.sqrt(P_iter))
+
+    def _clock_filter(self, pair, Q, R):
+        # Intervals
+        dt = self.time_intervals[pair]["dt"]
+        Ra2 = self.time_intervals[pair]["Ra2"]
+        Db2 = self.time_intervals[pair]["Db2"]
+        S1 = self.time_intervals[pair]["S1"]
+        S2 = self.time_intervals[pair]["S2"]
+        Db1 = self.time_intervals[pair]["Db1"]
+
+        # Storage variables
+        n = dt.size
+        x_hist = np.zeros((2,n))
+        P_hist = np.zeros((2,2,n))
+        kf_outliers_idx = np.zeros((n,), dtype=bool)
+
+        # Initial estimate and uncertainty
+        tau = 0
+        skew = 0
+        x = np.array([tau, skew])
+        x = x.reshape(2,1)
+        P = np.array(([1e18,0],[0,1e9])) # TODO: better estimate of initial uncertainty
+        # P = np.array(([1,0],[0,1])) # TODO: better estimate of initial uncertainty
+
+        for lv0, dt_iter in enumerate(dt):
+            Ra2_iter = Ra2[lv0]
+            Db2_iter = Db2[lv0]
+            S1_iter = S1[lv0]
+            S2_iter = S2[lv0]
+            Db1_iter = Db1[lv0]
+
+            if lv0>0:
+                x, P = self._propagate_clocks(x, P, dt_iter, Q)
+                P = 0.5*(P + P.T)
+
+            y = self._compute_pseudomeasurement(Ra2_iter, Db2_iter, S1_iter, S2_iter, Db1_iter)
+            x_temp, P_temp, reject = self._correct_clocks(x, P, y, R, Db1_iter, Db2_iter)
+
+            if reject:
+                kf_outliers_idx[lv0] = True
+            else:
+                P = 0.5*(P + P.T)
+
+                x = x_temp
+                P = P_temp
+            
+            x_hist[:,lv0] = x.reshape(2,)
+            P_hist[:,:,lv0] = P    
+            
+        return x_hist, P_hist, kf_outliers_idx
+
+    @staticmethod
+    def _compute_pseudomeasurement(Ra2, Db2, S1, S2, Db1):
+        y1 = 0.5*(S1 - S2)
+        y2 = Db2 - Ra2
+        # return np.array([y1, y2]).reshape(2,1)
+        y = - y1 - 0.5*(Db1/(Db2-Db1))*y2
+        return y
+
+    @staticmethod
+    def _correct_clocks(x, P, y, R, Db1, Db2):
+        # C = np.array([[-1,0.5*Db1/1e9], [0, -Db2/1e9]])
+        C = np.array([1, 0])
+        C = C.reshape(1,2)
+
+        y_check = C @ x
+
+        # R_matrix = np.array([[1.25*R, 0.5*R], [0.5*R, 2*R]])
+        R_matrix = R
+
+        # NIS Test
+        innovation = y - y_check
+        S = C @ P @ C.T + R_matrix
+        eps = innovation.T @ inv(S) @ innovation
+        if eps > 10:
+            reject = True
+            x_new = []
+            P_new = []
+        else:
+            K = P @ C.T @ inv(S)
+
+            reject = False
+            x_new = x + K @ innovation
+            P_new = (np.eye(2) - K @ C) @ P    
+
+        return x_new, P_new, reject
+
+    @staticmethod
+    def _propagate_clocks(x, P, dt, Q):
+        dt = dt/1e9
+        A = np.array(([1, dt], [0, 1]))
+        L = np.array(([dt, 0.5*dt**2], [0, dt]))
+
+        x_new = A @ x
+        P_new = A @ P @ A.T + L @ Q @ L.T / dt
+        
+        return x_new, P_new
+
+    @staticmethod
+    def _rolling_window(a, window):
+        '''
+        Copied from 
+        https://stackoverflow.com/questions/27427618/how-can-i-simply-calculate-the-rolling-moving-variance-of-a-time-series-in-pytho
+        '''
+        pad = np.ones(len(a.shape), dtype=np.int32)
+        pad[-1] = window-1
+        pad = list(zip(pad, np.zeros(len(a.shape), dtype=np.int32)))
+        a = np.pad(a, pad,mode='reflect')
+        shape = a.shape[:-1] + (a.shape[-1] - window + 1, window)
+        strides = a.strides + (a.strides[-1],)
+        return np.lib.stride_tricks.as_strided(a, shape=shape, strides=strides)
+
+    def _reject_outliers(self, bias, lifted_pr, std_window, chi_thresh, axs):
+        '''
+        keep fitting models and rejecting outliers until no more outliers
+        '''
+        outlier_bias = np.empty(0,)
+        outlier_lifted_pr = np.empty(0,)
+        while True:
+            # Fit 
+            bias_std = np.std(self._rolling_window(bias.ravel(), std_window), axis=-1)
+            std_spl = UnivariateSpline(lifted_pr, bias_std, k=3)
+            bias_std = std_spl(lifted_pr)
+
+            # Fit spline
+            spl = UnivariateSpline(lifted_pr, bias,k=3)
+            bias_fit = spl(lifted_pr)
+
+            # Remove outliers
+            norm_e_squared = (bias - bias_fit)**2 / bias_std**2
+            outliers = norm_e_squared > chi_thresh
+            if np.sum(outliers):
+                outlier_bias = np.hstack((outlier_bias, bias[outliers]))
+                bias = bias[~outliers]
+
+                outlier_lifted_pr = np.hstack((outlier_lifted_pr, lifted_pr[outliers]))
+                lifted_pr = lifted_pr[~outliers] 
+            else:
+                break
+
+        # PLOTTING
+        axs.scatter(lifted_pr, bias)
+        axs.scatter(outlier_lifted_pr, outlier_bias)
+        axs.set_xlabel(r"$f(P_r)$")
+        axs.set_ylabel(r"Bias [m]")
+
+        return spl, std_spl, bias, lifted_pr
+
+    def fit_model(self, std_window=50, chi_thresh=10.8, merge_pairs=False):
+        
+        if merge_pairs:
+            sorted_pairs = [tuple(sorted(i)) for i in self.tag_pairs]
+            addressed_pairs = list(set(sorted_pairs))
+            for i, pair in enumerate(addressed_pairs):
+                if pair not in self.tag_pairs:
+                    addressed_pairs[i] = pair[::-1]
+        else:
+            addressed_pairs = self.tag_pairs
+
+        num_pairs = len(addressed_pairs)
+        # fig, axs = plt.subplots(3,num_pairs,sharey='row')
+        fig, axs = plt.subplots(4,int(np.ceil((num_pairs+1)/4)),sharey='all',sharex='all')
+        fig2, axs2 = plt.subplots(2,1) 
+        fig3, axs3 = plt.subplots(4,int(np.ceil((num_pairs+1)/4)),sharey='all',sharex='all') 
+        fig3.suptitle(r"Outlier rejection")
+        axs[0,0].set_ylabel(r"Bias [m]")
+
+        self.mean_spline = {pair:[] for pair in addressed_pairs}
+        self.std_spline = {pair:[] for pair in addressed_pairs}
+
+        self._all_spline_data = {'lifted_pr_trunc': np.empty(0),
+                                 'lifted_pr': np.empty(0),
+                                 'bias': np.empty(0),
+                                 'std': np.empty(0)}
+
+        for lv0, pair in enumerate(addressed_pairs):
+            range = self.compute_range_meas(pair)
+            bias = range - self.time_intervals[pair]["r_gt"]
+            lifted_pr = 0.5*self.lift(self.ts_data[pair][:,self.fpp1_idx]) \
+                        + 0.5*self.lift(self.ts_data[pair][:,self.fpp2_idx])
+            r_gt_unsorted = self.time_intervals[pair]["r_gt"]
+
+            if merge_pairs and pair[::-1] in self.tag_pairs:
+                opposite_pair = pair[::-1]
+                range_new = self.compute_range_meas(opposite_pair)
+                range = np.append(range, range_new)
+                bias = np.append(bias, range_new - self.time_intervals[opposite_pair]["r_gt"])
+                lifted_pr = np.append(lifted_pr, 
+                                      0.5*self.lift(self.ts_data[opposite_pair][:,self.fpp1_idx]) \
+                                      + 0.5*self.lift(self.ts_data[opposite_pair][:,self.fpp2_idx]))
+                r_gt_unsorted = np.append(r_gt_unsorted, self.time_intervals[opposite_pair]["r_gt"])
+
+            pr_thresh = 2
+            bias = bias[lifted_pr < pr_thresh]
+            r_gt_unsorted = r_gt_unsorted[lifted_pr < pr_thresh]
+            lifted_pr = lifted_pr[lifted_pr < pr_thresh]   
+
+            # rolling var along last axis
+            sort_pr = np.argsort(lifted_pr)
+            bias = bias[sort_pr]
+            lifted_pr = lifted_pr[sort_pr]
+            r_gt = r_gt_unsorted[sort_pr]
+
+            spl, std_spl, bias_trunc, lifted_pr_trunc \
+                        = self._reject_outliers(bias, lifted_pr, std_window, chi_thresh, axs3[np.mod(lv0,4),int(np.floor(lv0/4))])
+            self.mean_spline[pair] = spl
+            self.std_spline[pair] = std_spl
+            bias_std = std_spl(lifted_pr)
+            bias_fit = spl(lifted_pr)
+
+            # Save the fit data 
+            self._all_spline_data['lifted_pr_trunc'] = np.append(self._all_spline_data['lifted_pr_trunc'], lifted_pr_trunc)
+            self._all_spline_data['lifted_pr'] = np.append(self._all_spline_data['lifted_pr'], lifted_pr)
+            self._all_spline_data['bias'] = np.append(self._all_spline_data['bias'], bias_trunc)
+            self._all_spline_data['std'] = np.append(self._all_spline_data['std'], bias_std)
+
+            ### PLOT 1 ###
+            axs[np.mod(lv0,4),int(np.floor(lv0/4))].scatter(lifted_pr_trunc, bias_trunc, label=r"Raw data", linestyle="dotted", s=1)
+            axs[np.mod(lv0,4),int(np.floor(lv0/4))].plot(lifted_pr, bias_fit, label=r"Fit")
+            axs[np.mod(lv0,4),int(np.floor(lv0/4))].fill_between(
+                lifted_pr.ravel(),
+                bias_fit - 3 * bias_std,
+                bias_fit + 3 * bias_std,
+                alpha=0.5,
+                label=r"99.97% confidence interval",
+            )
+            axs[np.mod(lv0,4),int(np.floor(lv0/4))].set_xlabel(r"$f(P_r)$")
+            
+            # ## Visualize std vs. distance
+            # axs[2,lv0].scatter(r_gt, bias_std, s=1)
+            # axs[2,lv0].set_xlabel(r"Ground truth distance [m]")
+
+            ### PLOT 2 ### Plot with all splines
+            axs2[0].plot(lifted_pr, bias_fit, label=r"Pair "+str(pair))
+            axs2[0].legend(loc='upper right')
+            axs2[0].set_xlabel(r"$f(P_r)$")
+            axs2[0].set_ylabel(r"Bias [m]")
+            fig2.suptitle(r"Bias-Power Fit")
+
+            axs2[1].plot(lifted_pr, bias_std, label=r"Pair "+str(pair))
+            axs2[1].legend()
+            axs2[1].set_xlabel(r"$f(P_r)$")
+            axs2[1].set_ylabel(r"Bias Std [m]")
+
+        axs[0,-1].legend()
+
+        # Sort stored fit data
+        sort_pr = np.argsort(self._all_spline_data['lifted_pr_trunc'])
+        self._all_spline_data['lifted_pr_trunc'] = self._all_spline_data['lifted_pr_trunc'][sort_pr]
+        self._all_spline_data['bias'] = self._all_spline_data['bias'][sort_pr]
+        self._all_spline_data['std'] = self._all_spline_data['std'][sort_pr]
+
+        sort_pr = np.argsort(self._all_spline_data['lifted_pr'])
+        self._all_spline_data['lifted_pr'] = self._all_spline_data['lifted_pr'][sort_pr]
+
+        # Fit a spline to the full dataset as well (i.e., not split by pairs)
+        bias_std = np.std(self._rolling_window(self._all_spline_data['bias'].ravel(), std_window), axis=-1)
+        std_spl = UnivariateSpline(self._all_spline_data['lifted_pr_trunc'], bias_std, k=3)
+        bias_std = std_spl(self._all_spline_data['lifted_pr'])
+
+        # Fit spline
+        spl = UnivariateSpline(self._all_spline_data['lifted_pr_trunc'], self._all_spline_data['bias'])
+        bias_fit = spl(self._all_spline_data['lifted_pr'])
+
+        spl, std_spl, bias_trunc, lifted_pr_trunc \
+                        = self._reject_outliers(self._all_spline_data['bias'], 
+                                                self._all_spline_data['lifted_pr_trunc'], 
+                                                std_window, 
+                                                chi_thresh, 
+                                                axs3[np.mod(lv0+1,4),int(np.floor((lv0+1)/4))])
+
+        bias_std = std_spl( self._all_spline_data['lifted_pr'])
+        bias_fit = spl( self._all_spline_data['lifted_pr'])
+
+        axs[np.mod(lv0+1,4),int(np.floor((lv0+1)/4))].scatter(lifted_pr_trunc,
+                                                            bias_trunc, 
+                                                            label=r"Raw data", 
+                                                            linestyle="dotted", 
+                                                            s=1)
+        axs[np.mod(lv0+1,4),int(np.floor((lv0+1)/4))].plot( self._all_spline_data['lifted_pr'], bias_fit, label=r"Fit")
+        axs[np.mod(lv0+1,4),int(np.floor((lv0+1)/4))].fill_between(
+             self._all_spline_data['lifted_pr'].ravel(),
+            bias_fit - 3 * bias_std,
+            bias_fit + 3 * bias_std,
+            alpha=0.5,
+            label=r"99.97% confidence interval",
+        )
+        axs[np.mod(lv0+1,4),int(np.floor((lv0+1)/4))].set_xlabel(r"$f(P_r)$")
+
+        axs2[0].plot(self._all_spline_data['lifted_pr'], bias_fit, label=r"All", linewidth=3)
+        axs2[0].legend(loc='upper right')
+        axs2[0].set_xlabel(r"$f(P_r)$")
+        axs2[0].set_ylabel(r"Bias [m]")
+        fig2.suptitle(r"Bias-Power Fit")
+
+        axs2[1].plot(self._all_spline_data['lifted_pr'], bias_std, label=r"All", linewidth=3)
+        axs2[1].legend()
+        axs2[1].set_xlabel(r"$f(P_r)$")
+        axs2[1].set_ylabel(r"Bias Std [m]")
+
+        self.spl = spl
+        self.std_spl = std_spl
 
     def calibrate_antennas(self):
         """
@@ -299,41 +621,35 @@ class UwbCalibrate(object):
 
         RETURNS:
         --------
-        dict: Dictionary with 3 fields each for board z \in {i,j,k}
+        dict: Dictionary with 3 fields each for tag z \in {i,j,k}
             Module i: (float)
-                Antenna delay for Board i
+                Antenna delay for tag i
         """
-        K1 = self._calculate_skew_gain(0,1)
-        A1 = self._setup_A_matrix(K1,0,1)
-        b1 = self._setup_b_vector(K1,0,1)
+        tags = sum(list(self.tag_ids.values()),[])
 
-        K2 = self._calculate_skew_gain(0,2)
-        A2 = self._setup_A_matrix(K2,0,2)
-        b2 = self._setup_b_vector(K2,0,2)
-
-        K3 = self._calculate_skew_gain(1,2)
-        A3 = self._setup_A_matrix(K3,1,2)
-        b3 = self._setup_b_vector(K3,1,2)
-
-        A = np.vstack((A1,A2,A3))
-        b = np.vstack((b1,b2,b3))
+        A = np.zeros((0,len(tags)))
+        b = np.zeros((0,1))
+        for pair in self.tag_pairs:
+            K = self._calculate_skew_gain(pair)
+            A = np.vstack((A, self._setup_A_matrix(pair, tags, K)))
+            b = np.vstack((b, self._setup_b_vector(pair, K)))
 
         nan_idx = ~np.isnan(b)
         nan_idx = nan_idx.flatten()
-        A = A[nan_idx,:]
+        A = A[nan_idx, :]
         b = b[nan_idx]
 
-        x = self._solve_for_antenna_delays(A,b)[0]
+        x = self._solve_for_antenna_delays(A, b)['x']
         x = x.flatten()
 
         print(np.linalg.norm(b))
-        print(np.linalg.norm(b-A*np.array([x[0],x[1],x[2]])))
+        print(np.linalg.norm(b.T - A @ x))
 
-        return {"Module " + str(self.board_ids[0]): x[0],
-                "Module " + str(self.board_ids[1]): x[1],
-                "Module " + str(self.board_ids[2]): x[2]}
+        self.delays = x
 
-    def correct_antenna_delay(self, id, delay):
+        return {id: x[i] for i,id in enumerate(tags)}
+
+    def correct_antenna_delay(self, delays_dict):
         """
         Modifies the data of this object to correct for the antenna delay of a
         specific module.
@@ -344,28 +660,57 @@ class UwbCalibrate(object):
             Module ID whose antenna delay is to be corrected.
         delay: float
             The amount of antenna delay, in nanoseconds.
-        """
-        for key in self.data:
-            if int(key.partition("-")[0]) == id:
-                self.data[key]['Ra1'] = self.data[key]['Ra1'] + delay
-            elif int(key.partition(">")[2]) == id:
-                self.data[key]['Db1'] = self.data[key]['Db1'] - delay
 
-    def compute_range_meas(self, id1, id2):
+        TODO: What about D1 and D2? This seems to be a problem.
+              We might have to calibrate for TX and RX delays separately
+              if we are to proceed with Kalman filtering with this architecture.
+        TODO: tof1, tof2, and tof3 as well, once individual delays are taken into consideration.
+        TODO: access delays from self object
         """
-        Only supports reverse double-sided TWR. 
-        TODO: support more TWR types, such as single-sided TWR. 
-        """
-        for key in self.data:
-            cond1 = int(key.partition("-")[0]) == id1 and int(key.partition(">")[2]) == id2
-            cond2 = int(key.partition("-")[0]) == id2 and int(key.partition(">")[2]) == id1
-            if cond1 or cond2:
-                temp = self.data[key]
-                if self.twr_type == 0:
-                    temp = 0.5*self._c*(temp['Ra1'] - temp['Db1'])/1e9
-                else:
-                    temp = 0.5*self._c*(temp['Ra1'] - (temp['Ra2']/temp['Db2'])*temp['Db1'])/1e9
-                return temp
+        for id in delays_dict.keys():
+            delay = delays_dict[id]
+            for pair in self.time_intervals:
+                if pair[0] == id:
+                    self.time_intervals[pair]["Ra1"] += delay
+                elif pair[1] == id:
+                    self.time_intervals[pair]["Db1"] -= delay
 
-    def plot_gt_vs_range(self, id, target):
-        pass
+    def compute_range_meas(self, pair=(1,2), visualize=False, owr = False):
+        # TODO: Inherit this function from PostProcess?
+        interv = self.time_intervals[pair]
+        if owr and self.mult_twr:
+            range = 1/2 * self._c / 1e9 \
+                    * (abs(interv["tof1"]) \
+                       + abs(interv["tof2"]) \
+                       + 0*abs(interv["tof3"])) # TODO: why *0? Antenna delay?
+        elif owr:
+            range = 1/2 * self._c / 1e9 \
+                    * (abs(interv["tof1"]) \
+                       + abs(interv["tof2"]))
+        elif self.mult_twr:
+            range = 0.5 * self._c / 1e9 * \
+                (interv["Ra1"] - (interv["Ra2"] / interv["Db2"]) * interv["Db1"])
+        else:
+            range = 0.5 * self._c / 1e9 * \
+                (interv["Ra1"] - interv["Db1"])
+
+        if visualize:
+            fig, axs = plt.subplots(1)
+
+            axs.plot(interv["t"]/1e9, range, label='Range Measurements')
+
+            axs.set_ylabel("Distance [m]")
+            axs.set_xlabel("t [s]")
+            axs.set_ylim([-1, 5])
+
+        return range
+
+    def save_calib_results(self):
+        calib_results = {
+                        'delays': self.delays,
+                        'bias_spl': self.spl,
+                        'std_spl': self.std_spl,
+                        }
+
+        with open("calib_results.pickle","wb") as file:
+            pickle.dump(calib_results, file)
