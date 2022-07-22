@@ -3,6 +3,7 @@ from numpy.linalg import inv
 import matplotlib.pyplot as plt
 from scipy.interpolate import UnivariateSpline
 from scipy.optimize import least_squares
+import pickle
 
 class UwbCalibrate(object):
     """
@@ -489,8 +490,8 @@ class UwbCalibrate(object):
         for lv0, pair in enumerate(addressed_pairs):
             range = self.compute_range_meas(pair)
             bias = range - self.time_intervals[pair]["r_gt"]
-            lifted_pr = self.lift(0.5*self.ts_data[pair][:,self.fpp1_idx] \
-                                  + 0.5*self.ts_data[pair][:,self.fpp2_idx])
+            lifted_pr = 0.5*self.lift(self.ts_data[pair][:,self.fpp1_idx]) \
+                        + 0.5*self.lift(self.ts_data[pair][:,self.fpp2_idx])
             r_gt_unsorted = self.time_intervals[pair]["r_gt"]
 
             if merge_pairs and pair[::-1] in self.tag_pairs:
@@ -499,8 +500,8 @@ class UwbCalibrate(object):
                 range = np.append(range, range_new)
                 bias = np.append(bias, range_new - self.time_intervals[opposite_pair]["r_gt"])
                 lifted_pr = np.append(lifted_pr, 
-                                      self.lift(0.5*self.ts_data[opposite_pair][:,self.fpp1_idx] \
-                                        + 0.5*self.ts_data[opposite_pair][:,self.fpp2_idx]))
+                                      0.5*self.lift(self.ts_data[opposite_pair][:,self.fpp1_idx]) \
+                                      + 0.5*self.lift(self.ts_data[opposite_pair][:,self.fpp2_idx]))
                 r_gt_unsorted = np.append(r_gt_unsorted, self.time_intervals[opposite_pair]["r_gt"])
 
             pr_thresh = 2
@@ -644,6 +645,8 @@ class UwbCalibrate(object):
         print(np.linalg.norm(b))
         print(np.linalg.norm(b.T - A @ x))
 
+        self.delays = x
+
         return {id: x[i] for i,id in enumerate(tags)}
 
     def correct_antenna_delay(self, delays_dict):
@@ -662,6 +665,7 @@ class UwbCalibrate(object):
               We might have to calibrate for TX and RX delays separately
               if we are to proceed with Kalman filtering with this architecture.
         TODO: tof1, tof2, and tof3 as well, once individual delays are taken into consideration.
+        TODO: access delays from self object
         """
         for id in delays_dict.keys():
             delay = delays_dict[id]
@@ -700,3 +704,13 @@ class UwbCalibrate(object):
             axs.set_ylim([-1, 5])
 
         return range
+
+    def save_calib_results(self):
+        calib_results = {
+                        'delays': self.delays,
+                        'bias_spl': self.spl,
+                        'std_spl': self.std_spl,
+                        }
+
+        with open("calib_results.pickle","wb") as file:
+            pickle.dump(calib_results, file)
