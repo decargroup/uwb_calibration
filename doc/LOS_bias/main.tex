@@ -189,10 +189,51 @@ Therefore, the expected value for the error is
 while the variance is 
 \begin{align}
     \mathbb{E}[(e - \mathbb{E}[e])(\cdot)^\trans] &= \f{1}{4} (1 + \gamma_1)^2 \left[ \left(\f{t_3 - t_2}{t_5 - t_3}\right)^2 \left( R_5 - R_3 + R_6 - R_4 \right) + 2\left(\f{t_3 - t_2}{t_5 - t_3}\right) \left( R_3 + R_4 \right) + R_4 - R_1 + R_2 - R_3 \right] \\
-    &= (1 + \gamma_1)^2 R + (1 + \gamma_1)^2 \left(\f{t_3 - t_2}{t_5 - t_3}\right) R + (1 + \gamma_1)^2 \left(\f{t_3 - t_2}{t_5 - t_3}\right)^2 R.
+    &= (1 + \gamma_1)^2 R + (1 + \gamma_1)^2 \left(\f{t_3 - t_2}{t_5 - t_3}\right) R + (1 + \gamma_1)^2 \left(\f{t_3 - t_2}{t_5 - t_3}\right)^2 R. \label{eq:ds_uncertainty}
 \end{align}
 
 Note that if $\gamma_1 = \gamma_2 = 0$, and as $t_5 - t_3 \rightarrow \infty$, the variance of DS TWR approaches that of the SS TWR. Given that this is not possible, $t_3 - t_2$ should be minimized while $t_5 - t_3$ should be maximized. The latter comes at a cost of measurement frequency, and therefore the user can design this value based on the application.
+
+\subsubsection{Optimal Delay in DS TWR}
+
+The amount of \emph{information} perceived in one unit of time is a function of two variables, 
+\begin{enumerate}
+    \item the uncertainty of the individual measurement, and
+    \item the number of measurements in that unit of time. 
+\end{enumerate}
+As per \eqref{eq:ds_uncertainty}, the uncertainty in the individual measurement decreases as the delay in the second response (i.e., $\Delta t_4$, hereinafter referred to as \emph{the delay}) increases. However, as the delay increases, measurements occur less frequently, hence reducing the amount of information conveyed in a unit of time. As a result, the \emph{optimal} delay is one that is long enough to reduce the uncertainty of the individual measurement but short enough to ensure measurements are recorded at a sufficient frequency. 
+
+Rewriting \eqref{eq:ds_uncertainty} in the absence of clock skews yields
+\beq
+    R_i \triangleq R + \f{\Delta t_2}{\Delta t_4} R + \left(\f{\Delta t_2}{\Delta t_4}\right)^2 R,
+\eeq
+for the individual measurement, where the time-stamps are replaced with the time delays for conciseness. The time-length of one measurement can be defined to be $T + \Delta t_4$ seconds long, where the time taken for all other signals and computational processing is lumped into the $T$ term as $\Delta t_4$ is the only variable of concern. Therefore, in one second, a total of $\f{1}{T + \Delta t_4}$ measurements occur, meaning that the overall uncertainty (inverse of information) of the measurements is given as
+\begin{align}
+    R_t &\triangleq (T + \Delta t_4) R_i \\
+    %
+    &= (T + \Delta t_4) R + \f{\Delta t_2 (T + \Delta t_4)}{\Delta t_4} R + \f{(\Delta t_2)^2(T + \Delta t_4)}{(\Delta t_4)^2} R \\
+    %
+    &= (T + \Delta t_4) R + \Delta t_2 T (\Delta t_4)^{-1} R + \Delta t_2 R + (\Delta t_2)^2 T (\Delta t_4)^{-2} R + (\Delta t_2)^2(\Delta t_4)^{-1} R. \label{eq:total_unc}
+\end{align}
+%
+The derivative of \eqref{eq:total_unc} w.r.t. $\Delta t_4$ is then
+\beq
+    \f{\partial R_t}{\partial \Delta t_4} = R - \Delta t_2 T (\Delta t_4)^{-2} R - 2(\Delta t_2)^2 T (\Delta t_4)^{-3} R - (\Delta t_2)^2 (\Delta t_4)^{-2} R,
+\eeq
+and equating to 0 yields
+\begin{align}
+    0 &= (\Delta t_4)^3 - \Delta t_2 T \Delta t_4 - 2(\Delta t_2)^2 T - (\Delta t_2)^2 \Delta t_4 \\
+    &= (\Delta t_4)^3 - \Delta t_2 (T + \Delta t_2) \Delta t_4 - 2(\Delta t_2)^2 T. \label{eq:optimal_delay}
+\end{align}
+
+The value for $T$ and $\Delta t_2$ can be determined experimentally and are application dependent. For the case where $a=6$ ms and $\Delta t_2=0.3$ ms, the optimal delay can be found analytically to be approximately 1.6 ms using \eqref{eq:optimal_delay}. This is also shown in Figure \ref{fig:optimal_delay}.
+
+\begin{figure}[h!]
+    \centering
+    \includegraphics[width=0.6\textwidth]{figs/optimal_delay.pdf}
+    \caption{Overall uncertainty as a function of second-response delay.}
+    \label{fig:optimal_delay}
+\end{figure}
 
 \clearpage
 \subsection{Examples}
