@@ -1,13 +1,14 @@
 import os
 import rosbag
 
-directory_path = 'datasets/2022_06_15/bias_calibration/'
+directory_path = 'datasets/2022_07_07/'
 
 new_bag = rosbag.Bag(directory_path+"merged.bag", 'w')
 
+# Look for all rosbags in directory
 for file in os.listdir(directory_path):
     filename = os.fsdecode(file)
-    if filename == "merged.bag":
+    if filename == "merged.bag" or filename[-3:] != "bag":
         continue
 
     bag = rosbag.Bag(directory_path+filename)
