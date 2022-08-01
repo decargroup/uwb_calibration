@@ -15,7 +15,7 @@ tag_ids={'ifo001': [1,2],
 moment_arms={'ifo001': [[0.15846,-0.16067,-0.07762], [-0.19711,0.14649,-0.082706]],
              'ifo002': [[0.18620,-0.13653,-0.05268], [-0.16133,0.17290,-0.047776]],
              'ifo003': [[0.18776,-0.16791,-0.08407], [-0.15605,0.14864,-0.079526]]}
-raw_obj = PostProcess("datasets/2022_07_07/08/merged.bag",
+raw_obj = PostProcess("datasets/2022_07_26/bias_calibration_trial2_incomplete/merged.bag",
                       tag_ids,
                       moment_arms,
                       num_meas=-1)
@@ -141,7 +141,7 @@ for lv0, pair_i in enumerate(calib_obj.mean_spline):
 axs[0].legend()
 plt.show(block=True)
 # %% TESTING 
-raw_obj2 = PostProcess("datasets/2022_07_07/04/merged.bag",
+raw_obj2 = PostProcess("datasets/2022_07_26/bias_calibration_trial2_incomplete/merged.bag",
                        tag_ids,
                        moment_arms,
                        num_meas=-1)
