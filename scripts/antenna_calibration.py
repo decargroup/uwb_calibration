@@ -12,10 +12,13 @@ sns.set_theme()
 tag_ids={'ifo001': [1,2],
          'ifo002': [3,4],
          'ifo003': [5,6]}
-moment_arms={'ifo001': [[0.15846,-0.16067,-0.07762], [-0.19711,0.14649,-0.082706]],
-             'ifo002': [[0.18620,-0.13653,-0.05268], [-0.16133,0.17290,-0.047776]],
-             'ifo003': [[0.18776,-0.16791,-0.08407], [-0.15605,0.14864,-0.079526]]}
-raw_obj = PostProcess("datasets/2022_07_26/bias_calibration_trial2_incomplete/merged.bag",
+# moment_arms={'ifo001': [[0.15846,-0.16067,-0.07762], [-0.19711,0.14649,-0.082706]],
+            #  'ifo002': [[0.18620,-0.13653,-0.05268], [-0.16133,0.17290,-0.047776]],
+            #  'ifo003': [[0.18776,-0.16791,-0.08407], [-0.15605,0.14864,-0.079526]]}
+moment_arms={'ifo001': [[0.13189,-0.17245,-0.05249], [-0.17542,0.15712,-0.05307]],
+             'ifo002': [[0.16544,-0.15085,-0.03456], [-0.15467,0.16972,-0.01680]],
+             'ifo003': [[0.16685,-0.18113,-0.05576], [-0.13485,0.15468,-0.05164]]}
+raw_obj = PostProcess("datasets/2022_08_03/bias_calibration_new/merged.bag",
                       tag_ids,
                       moment_arms,
                       num_meas=-1)
@@ -27,8 +30,8 @@ raw_obj = PostProcess("datasets/2022_07_26/bias_calibration_trial2_incomplete/me
 kf = False
 power_calib = True
 antenna_delay = True
-initiator_id = 2
-target_id = 3
+initiator_id = 4
+target_id = 6
 pair = (initiator_id, target_id)
 # raw_obj.visualize_raw_data(pair=(initiator_id,target_id))
 
@@ -82,13 +85,15 @@ if antenna_delay:
     #%%
     fig, axs = plt.subplots(2)
 
+    t = calib_obj.time_intervals[pair]['t']
+
     axs[0].set_title("Measurements for pair " + str(pair))
     axs[0].set_xlabel("Measurement Number")
     axs[0].set_ylabel("Range [m]")
     axs[0].set_ylim(0, 4)
-    axs[0].plot(calib_obj.time_intervals[pair]["r_gt"], linewidth=3, label="GT")
-    axs[0].plot(meas_old[pair], linewidth=1, label="Raw")
-    axs[0].plot(meas_new, linewidth=1, label="Antenna-Delay Calibrated")
+    axs[0].plot(t,calib_obj.time_intervals[pair]["r_gt"], linewidth=3, label="GT")
+    # axs[0].plot(t,meas_old[pair], linewidth=1, label="Raw")
+    axs[0].scatter(t,meas_new, linewidth=1, label="Antenna-Delay Calibrated", color='g')
     axs[0].legend()
 
     axs[1].set_title("Error for pair " + str(pair))
@@ -98,8 +103,6 @@ if antenna_delay:
     axs[1].plot(meas_old[pair] - calib_obj.time_intervals[pair]["r_gt"], linewidth=1, label="Raw")
     axs[1].plot(meas_new - calib_obj.time_intervals[pair]["r_gt"], linewidth=1, label="Antenna-Delay Calibrated")
     axs[1].legend()
-
-    # %%
 
 # %% Power calibration
 if power_calib:
@@ -141,7 +144,7 @@ for lv0, pair_i in enumerate(calib_obj.mean_spline):
 axs[0].legend()
 plt.show(block=True)
 # %% TESTING 
-raw_obj2 = PostProcess("datasets/2022_07_26/bias_calibration_trial2_incomplete/merged.bag",
+raw_obj2 = PostProcess("datasets/2022_08_03/bias_calibration/merged.bag",
                        tag_ids,
                        moment_arms,
                        num_meas=-1)
@@ -184,6 +187,7 @@ axs[0].fill_between(
                     3 * std,
                     alpha=0.5,
                     label=r"99.97% confidence interval",
+                    color='b',
                 )
 axs[0].legend()
 
