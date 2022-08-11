@@ -18,7 +18,7 @@ tag_ids={'ifo001': [1,2],
 moment_arms={'ifo001': [[0.13189,-0.17245,-0.05249], [-0.17542,0.15712,-0.05307]],
              'ifo002': [[0.16544,-0.15085,-0.03456], [-0.15467,0.16972,-0.01680]],
              'ifo003': [[0.16685,-0.18113,-0.05576], [-0.13485,0.15468,-0.05164]]}
-raw_obj = PostProcess("datasets/2022_08_03/bias_calibration_new/merged.bag",
+raw_obj = PostProcess("datasets/2022_08_03/simple_nlos/merged.bag",
                       tag_ids,
                       moment_arms,
                       num_meas=-1)
@@ -30,8 +30,8 @@ raw_obj = PostProcess("datasets/2022_08_03/bias_calibration_new/merged.bag",
 kf = False
 power_calib = True
 antenna_delay = True
-initiator_id = 4
-target_id = 6
+initiator_id = 5
+target_id = 3
 pair = (initiator_id, target_id)
 # raw_obj.visualize_raw_data(pair=(initiator_id,target_id))
 
