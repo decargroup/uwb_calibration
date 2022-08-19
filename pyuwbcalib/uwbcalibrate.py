@@ -102,14 +102,15 @@ class UwbCalibrate(object):
         upper_idxs = {pair:[] for pair in ts_data}
         
         thresh = 0.2
+        window = 10 # size of windows
 
         for pair in ts_data:
             gt = time_intervals[pair]['r_gt']
             
             # Lower bound
             p1 = gt[0]
-            p2 = gt[100]
-            p3 = gt[200]
+            p2 = gt[window//2]
+            p3 = gt[window]
 
             mean = (p1+p2+p3)/3
             cond1 = np.abs(p1 - mean) > thresh
@@ -118,13 +119,13 @@ class UwbCalibrate(object):
             if cond1 or cond2 or cond3:
                 lower_idxs[pair] = 0
             else:
-                mean = np.mean(gt[:200])
+                mean = np.mean(gt[:window])
                 deviation = gt - mean
                 deviation_bool = deviation > thresh
 
                 # Find the first 2 consecutive true values
                 found_idx = False
-                for lv0 in range(401, len(gt)-5):
+                for lv0 in range(window, len(gt)-5):
                     cond = np.all(deviation_bool[lv0:lv0+2])
                     if cond:
                         lower_idxs[pair] = lv0
@@ -136,8 +137,8 @@ class UwbCalibrate(object):
 
             # Upper bound
             p1 = gt[-1]
-            p2 = gt[-100]
-            p3 = gt[-200]
+            p2 = gt[-window//2]
+            p3 = gt[-window]
 
             mean = (p1+p2+p3)/3
             cond1 = np.abs(p1 - mean) > thresh
@@ -146,13 +147,13 @@ class UwbCalibrate(object):
             if cond1 or cond2 or cond3:
                 upper_idxs[pair] = len(gt)
             else:
-                mean = np.mean(gt[-200:])
+                mean = np.mean(gt[-window:])
                 deviation = gt - mean
                 deviation_bool = deviation > thresh
 
                 # Find the first 2 consecutive true values
                 found_idx = False
-                for lv0 in range(-401, -len(gt)+5):
+                for lv0 in range(-window, -len(gt)+5):
                     cond = np.all(deviation_bool[lv0:lv0-2])
                     if cond:
                         upper_idxs[pair] = lv0
@@ -504,7 +505,7 @@ class UwbCalibrate(object):
                                       + 0.5*self.lift(self.ts_data[opposite_pair][:,self.fpp2_idx]))
                 r_gt_unsorted = np.append(r_gt_unsorted, self.time_intervals[opposite_pair]["r_gt"])
 
-            pr_thresh = 2
+            pr_thresh = 1.75
             bias = bias[lifted_pr < pr_thresh]
             r_gt_unsorted = r_gt_unsorted[lifted_pr < pr_thresh]
             lifted_pr = lifted_pr[lifted_pr < pr_thresh]   
@@ -539,6 +540,7 @@ class UwbCalibrate(object):
                 label=r"99.97% confidence interval",
             )
             axs[np.mod(lv0,4),int(np.floor(lv0/4))].set_xlabel(r"$f(P_r)$")
+            axs[np.mod(lv0,4),int(np.floor(lv0/4))].set_title(str(pair))
             
             # ## Visualize std vs. distance
             # axs[2,lv0].scatter(r_gt, bias_std, s=1)
