@@ -125,7 +125,7 @@ tag_ids={'ifo001': [1,2],
 moment_arms={'ifo001': [[0.15846,-0.16067,-0.07762], [-0.19711,0.14649,-0.082706]],
                 'ifo002': [[0.18620,-0.13653,-0.05268], [-0.16133,0.17290,-0.047776]],
                 'ifo003': [[0.18776,-0.16791,-0.08407], [-0.15605,0.14864,-0.079526]]}
-filename = "datasets/2022_07_07/04/merged.bag"
+filename = "datasets/2022_08_03/bias_calibration/merged.bag"
 raw_obj = PostProcess(filename,
                       tag_ids,
                       moment_arms,
@@ -164,8 +164,8 @@ uwb = {'range': range[idx_sorted],
 
 # %%
 ### --- Get CALIBRATED UWB measurements between main tag and all other tags --- ###
-if filename != "datasets/2022_07_07/08/merged.bag":
-    raw_obj_calib = PostProcess("datasets/2022_07_07/08/merged.bag",
+if filename != "datasets/2022_08_03/bias_calibration_new2/merged.bag":
+    raw_obj_calib = PostProcess("datasets/2022_08_03/bias_calibration_new2/merged.bag",
                                 tag_ids,
                                 moment_arms,
                                 num_meas=-1)

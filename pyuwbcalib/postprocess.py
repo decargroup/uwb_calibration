@@ -524,9 +524,10 @@ class PostProcess(object):
 
         fig, axs = plt.subplots(1)
 
-        axs.plot(self.time_intervals[pair]["t"]/1e9, range, label='Range Measurements')
-        axs.scatter(self.time_intervals[pair]["t"]/1e9, \
-                    self.time_intervals[pair]["r_gt"], s=1, \
+        axs.scatter(self.time_intervals[pair]["t"]/1e9, range, 
+                    s=1, label='Range Measurements')
+        axs.plot(self.time_intervals[pair]["t"]/1e9, \
+                    self.time_intervals[pair]["r_gt"], \
                     label='Ground Truth', color='r')
 
         axs.set_ylabel("Distance [m]")
@@ -620,7 +621,7 @@ class PostProcess(object):
         ### --- BIAS AND POWER vs. TIME --- ###
         fig, axs = plt.subplots(3)
 
-        axs[0].plot(interv["t"]/1e9,bias)
+        axs[0].scatter(interv["t"]/1e9,bias, s=1)
         axs[0].set_ylabel("Bias [m]")
         # axs[0].set_ylim([bias_l, bias_u])
 

@@ -1,4 +1,5 @@
 import pickle
+import numpy as np
 
 class ComputeCorrectedRange(object):
     """
@@ -10,12 +11,15 @@ class ComputeCorrectedRange(object):
     _c = 299702547 # speed of light
     _dwt_to_ns = 1e9 * (1.0 / 499.2e6 / 128.0) # DW time unit to nanoseconds
 
-    def __init__(self):
+    def __init__(self, in_ns=False):
         """
         Constructor
         """
+        if in_ns:
+            self._dwt_to_ns = 1
+
         # Retrieve pre-determined calibration results
-        with open("calib_results.pickle", 'rb') as pickle_file:
+        with open("calib_results_new.pickle", 'rb') as pickle_file:
             calib_results = pickle.load(pickle_file)
         
         self.delays = calib_results['delays']
@@ -30,7 +34,7 @@ class ComputeCorrectedRange(object):
         PARAMETERS:
         -----------
         uwb_data: RangeStamped
-            One instance of UWB data. 
+            One instance of UWB data. Can also pass many instances for one pair.
 
         RETURNS:
         --------
@@ -45,8 +49,8 @@ class ComputeCorrectedRange(object):
                 Standard deviation of corrected range measurement.
         """
         # Get tag IDs
-        from_id = int(uwb_data["from_id"])
-        to_id = int(uwb_data["to_id"])
+        from_id = int(np.array(uwb_data["from_id"])[0])
+        to_id = int(np.array(uwb_data["to_id"])[0])
 
         # Get timestamps
         tx1 = uwb_data["tx1"]*self._dwt_to_ns
@@ -92,7 +96,7 @@ class ComputeCorrectedRange(object):
         range = self._compute_range(Ra1, Ra2, Db1, Db2, bias)
 
         # Get standard deviation of measurement
-        std = float(self.std_spl(fpp_lift_avg))
+        std = self.std_spl(fpp_lift_avg)
 
         return {
                 'from_id': from_id,
@@ -130,11 +134,12 @@ class ComputeCorrectedRange(object):
         # The timestamps are registered as type uint32.
         max_time_ns = 2**32 * self._dwt_to_ns
         
-        if ts2 < ts1:
-            ts2 += max_time_ns
-            ts3 += max_time_ns
-        if ts3 < ts2:
-            ts3 += max_time_ns
+        idx = ts2 < ts1
+        ts2 += idx*max_time_ns
+        ts3 += idx*max_time_ns
+        
+        idx = ts3 < ts2
+        ts3 += idx*max_time_ns
 
         return ts2, ts3
 
