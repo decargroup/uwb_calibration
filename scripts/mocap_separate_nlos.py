@@ -1,8 +1,7 @@
 # %%
 from pyuwbcalib.postprocess import PostProcess
 from pyuwbcalib.computecorrectedrange import ComputeCorrectedRange
-from scipy.interpolate import interp1d, BSpline
-from pyuwbcalib.uwbcalibrate import UwbCalibrate
+from scipy.interpolate import BSpline
 from sklearn.ensemble import RandomForestClassifier
 import pandas as pd
 from scipy.spatial import ConvexHull
@@ -18,7 +17,7 @@ sns.set_theme()
 
 def append_dfs(df):
     df_all = df_all = pd.concat(df,ignore_index=True).copy()
-    df_all['bias'] = df_all['range'] - df_all['gt']
+    df_all['bias'] = df_all['calib_range'] - df_all['gt']
     df_all['fpp_avg'] = 0.5 * (df_all['fpp1'] + df_all['fpp2'])
     df_all['rxp_avg'] = 0.5 * (df_all['rxp1'] + df_all['rxp2'])
     df_all['std_avg'] = 0.5 * (df_all['std1'] + df_all['std2'])
@@ -158,16 +157,15 @@ class MocapSeparateNlos(object):
         self.identify_nlos()
 
     def _calibrate(self):
-        correct_range = ComputeCorrectedRange(in_ns=True)
+        correct_range = ComputeCorrectedRange(in_ns=True, filename="calib_results_new.pickle")
         for pair in self.data:
             data_iter = self.data[pair].copy()
             n = len(data_iter)
             data_iter["from_id"] = pair[0]*np.ones((n,))
             data_iter["to_id"] = pair[1]*np.ones((n,))
             calib_iter = correct_range.get_corrected_range(data_iter)
-            self.data[pair]["uncalib_range"] = self.data[pair]["range"].copy()
-            self.data[pair]["range"] = calib_iter['range']
-            self.data[pair]["std"] = calib_iter['std']
+            self.data[pair]["calib_range"] = calib_iter['range']
+            self.data[pair]["calib_std"] = calib_iter['std']
 
     def _drop_timestamps(self):
         for pair in self.data:
@@ -476,9 +474,9 @@ for i,pair in enumerate(sep_nlos_obj.data):
     nlos1_idx = np.array(df['num_collisions'] == 1)
     nlos2_idx = np.array(df['num_collisions'] == 2)
 
-    axs[row,col].scatter(df['t_nsecs'][los_idx], df['range'][los_idx])
-    axs[row,col].scatter(df['t_nsecs'][nlos1_idx], df['range'][nlos1_idx])
-    axs[row,col].scatter(df['t_nsecs'][nlos2_idx], df['range'][nlos2_idx])
+    axs[row,col].scatter(df['t_nsecs'][los_idx], df['calib_range'][los_idx])
+    axs[row,col].scatter(df['t_nsecs'][nlos1_idx], df['calib_range'][nlos1_idx])
+    axs[row,col].scatter(df['t_nsecs'][nlos2_idx], df['calib_range'][nlos2_idx])
     axs[row,col].set_title(r''+str(pair))
     axs[row,col].set_ylim(0,10)
 

@@ -11,7 +11,7 @@ class ComputeCorrectedRange(object):
     _c = 299702547 # speed of light
     _dwt_to_ns = 1e9 * (1.0 / 499.2e6 / 128.0) # DW time unit to nanoseconds
 
-    def __init__(self, in_ns=False):
+    def __init__(self, in_ns=False, filename="calib_results.pickle"):
         """
         Constructor
         """
@@ -19,7 +19,7 @@ class ComputeCorrectedRange(object):
             self._dwt_to_ns = 1
 
         # Retrieve pre-determined calibration results
-        with open("calib_results_new.pickle", 'rb') as pickle_file:
+        with open(filename, 'rb') as pickle_file:
             calib_results = pickle.load(pickle_file)
         
         self.delays = calib_results['delays']
