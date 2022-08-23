@@ -11,7 +11,7 @@ n = 3 # number of tags
 m = n-1
 N = n*2 + m*2
 
-A0 = np.zeros((2*n, N))
+A0 = np.hstack((np.eye((2*n)),np.zeros((2*n,2*m))))
 A1 = np.hstack((np.zeros((m, 2*n)),np.eye(m),np.eye(m)*T))
 A2 = np.hstack((np.zeros((m, 2*n+m)),np.eye(m)))
 A = np.vstack((A0,A1,A2))
@@ -26,7 +26,7 @@ tag_i = 0
 tag_j = 1
 for _ in range(n_twr):
     C[row,2*tag_i:2*tag_i+2] = [0.5, 0.5]
-    C[row,2*tag_j:2*tag_j+2] = [-0.5*K, -0.5*K]
+    C[row,2*tag_j:2*tag_j+2] = [0.5*K, 0.5*K]
 
     row += 1
     tag_j += 1
