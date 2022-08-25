@@ -92,7 +92,7 @@ On the UWB modules, the Decawave chip performs the timestamping, while the anten
 \end{align}
 where $d_i^t$ and $d_i^r$ are the antenna transmission and reception delays of Tag $i$, respectively.
 
-The calibration procedure described by DW is specific to standard TWR, and does not suggest any optimization but rather a heuristic approach to calibrate the delays. In what follows, a linear least-squares approach is proposed for the reversed double-sided TWR algorithm.
+The calibration procedure described by DW is specific to standard TWR, and does not suggest any optimization but rather a heuristic approach to calibrate the delays. In what follows, a linear least-squares approach is proposed for the reversed double-sided TWR protocol.
 
 The true time-of-flight of a signal as a function of the measured time-stamps can be modelled as
 \begin{align}
@@ -104,9 +104,11 @@ The true time-of-flight of a signal as a function of the measured time-stamps ca
 The actual measured deltas as a function of the true deltas and the antenna delays are given by
 \begin{align}
     t_f &= \f{1}{2} \left( \Delta {t}_1 - \f{ \Delta {t}_3}{\Delta {t}_4} \Delta {t}_2 \right) \\
-    &= \f{1}{2} \left( \Delta \hat{t}_1 + \underbrace{ d_1^r + d_1^t}_{d_1} - \f{ \Delta \hat{t}_3}{\Delta \hat{t}_4} \left( \Delta t_2  \underbrace{ - d_2^t - d_2^r}_{-d_2} \right) \right)
+    &= \f{1}{2} \left( \Delta \hat{t}_1 + \underbrace{ d_1^r + d_1^t}_{d_1} - \f{ \Delta \hat{t}_3}{\Delta \hat{t}_4} \left( \Delta \hat{t}_2  \underbrace{ - d_2^t - d_2^r}_{-d_2} \right) \right) \label{eq:tof_with_delays}
 \end{align}
-Clearly, transmission and reception delays can be combined into one delay variable to be optimized for every tag. For one measurement, this can be re-written as
+Clearly, transmission and reception delays can be combined into one delay variable to be optimized for every tag. \textcolor{red}{This is sufficient for systems where only two-way ranging is utilized. However, when other protocols are used such as one-way ranging (OWR) or time-difference-of-arrival (TDoA), the individual antenna delays must be calibrated separately. For generality, the remainder of this section addresses the case where individual delays are to be calibrated.}
+
+For one measurement, \eqref{eq:tof_with_delays} can be re-written as
 \begin{align}
     \bma{cc} \f{1}{2} & \f{1}{2}K \ema \bma{c} d_1 \\ d_2 \ema &= \bma{c} t_f - \f{1}{2} \Delta \hat{t}_1 + \f{1}{2} K \Delta \hat{t}_2 \ema \\
     &\triangleq b,

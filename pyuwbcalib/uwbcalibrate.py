@@ -242,7 +242,7 @@ class UwbCalibrate(object):
 
         return np.reshape(b, (len(K), 1))
 
-    def _solve_for_antenna_delays(self, A, b):
+    def _solve_for_antenna_delays(self, A, b, loss):
         """
         Solves the linear least-squares problem.
 
@@ -259,7 +259,7 @@ class UwbCalibrate(object):
         """
         # return np.linalg.lstsq(A, b)
         n = A.shape[1]
-        return least_squares(self._cost_func, np.zeros(n), loss='cauchy', f_scale=0.1, args=(A,b.T))
+        return least_squares(self._cost_func, np.zeros(n), loss=loss, f_scale=0.1, args=(A,b.T))
 
     @staticmethod
     def _cost_func(x,A,b):
@@ -617,7 +617,7 @@ class UwbCalibrate(object):
         self.spl = spl
         self.std_spl = std_spl
 
-    def calibrate_antennas(self):
+    def calibrate_antennas(self, loss='cauchy'):
         """
         Calibrate the antenna delays by formulating and solving a linear least-squares problem.
 
@@ -641,7 +641,7 @@ class UwbCalibrate(object):
         A = A[nan_idx, :]
         b = b[nan_idx]
 
-        x = self._solve_for_antenna_delays(A, b)['x']
+        x = self._solve_for_antenna_delays(A, b, loss)['x']
         x = x.flatten()
 
         print(np.linalg.norm(b))
