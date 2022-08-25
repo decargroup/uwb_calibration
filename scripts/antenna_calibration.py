@@ -134,6 +134,7 @@ for lv0, pair_i in enumerate(calib_obj.mean_spline):
     axs[lv0].set_xlabel("Measurement Number")
     axs[lv0].set_ylim([-0.35, 0.6])
 
+    print("Pair: "+ str(pair))
     print("Raw Mean: "+ str(np.mean(meas_old[pair_i]-gt)))
     print("Antenna-Calibrated Mean: " + str(np.mean(meas-gt)))
     print("Fully-Calibrated Mean: " + str(np.mean(meas_calibrated-gt)))

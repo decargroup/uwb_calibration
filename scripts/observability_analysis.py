@@ -4,6 +4,7 @@
 import numpy as np
 import control 
 import scipy
+import random
 
 T = 1e-2
 K = 0.99
@@ -16,7 +17,7 @@ A1 = np.hstack((np.zeros((m, 2*n)),np.eye(m),np.eye(m)*T))
 A2 = np.hstack((np.zeros((m, 2*n+m)),np.eye(m)))
 A = np.vstack((A0,A1,A2))
 
-n_twr = n*(n-1)//2
+n_twr = n*(n-1)
 n_passive = n*(n-1)
 n_meas = n_twr + n_passive
 C = np.zeros((n_twr+n_passive, N))
@@ -24,9 +25,16 @@ C = np.zeros((n_twr+n_passive, N))
 row = 0
 tag_i = 0
 tag_j = 1
-for _ in range(n_twr):
+for _ in range(n_twr//2):
+    K = random.randrange(95, 105, 1)/100
     C[row,2*tag_i:2*tag_i+2] = [0.5, 0.5]
     C[row,2*tag_j:2*tag_j+2] = [0.5*K, 0.5*K]
+
+    row += 1
+
+    K = random.randrange(95, 105, 1)/100
+    C[row,2*tag_i:2*tag_i+2] = [0.5*K, 0.5*K]
+    C[row,2*tag_j:2*tag_j+2] = [0.5, 0.5]
 
     row += 1
     tag_j += 1
