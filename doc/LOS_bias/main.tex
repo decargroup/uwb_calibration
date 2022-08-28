@@ -94,14 +94,14 @@ where $d_i^t$ and $d_i^r$ are the antenna transmission and reception delays of T
 
 The calibration procedure described by DW is specific to standard TWR, and does not suggest any optimization but rather a heuristic approach to calibrate the delays. In what follows, a linear least-squares approach is proposed for the reversed double-sided TWR protocol.
 
-The true time-of-flight of a signal as a function of the measured time-stamps can be modelled as
+The actual measured deltas as a function of the true deltas and the antenna delays are given by
 \begin{align}
     \Delta \hat{t}_1 &= \Delta t_1 - d_1^r - d_1^t, \\
     \Delta \hat{t}_2 &= \Delta t_2 + d_2^t + d_2^r, \\
     \Delta \hat{t}_3 &= \Delta t_3, \\
     \Delta \hat{t}_4 &= \Delta t_4,
 \end{align}
-The actual measured deltas as a function of the true deltas and the antenna delays are given by
+The true time-of-flight of a signal as a function of the measured time-stamps can be modelled as
 \begin{align}
     t_f &= \f{1}{2} \left( \Delta {t}_1 - \f{ \Delta {t}_3}{\Delta {t}_4} \Delta {t}_2 \right) \\
     &= \f{1}{2} \left( \Delta \hat{t}_1 + \underbrace{ d_1^r + d_1^t}_{d_1} - \f{ \Delta \hat{t}_3}{\Delta \hat{t}_4} \left( \Delta \hat{t}_2  \underbrace{ - d_2^t - d_2^r}_{-d_2} \right) \right) \label{eq:tof_with_delays}
@@ -323,6 +323,8 @@ In \cite{Cano2022}, the antenna delay for every pair of tags is calibrated as on
     K = \f{1}{2} \left( k_i^r - k_i^t \right) + \f{1}{2} \left( k_j^r - k_j^t \right).
 \eeq
 Nonetheless, this proposed calibration approach requires that the procedure is done for every pair of robots, which is tedious and not scalable. A simpler approach would be to utilize the fact that the antenna delay for each tag is constant. 
+
+\textcolor{red}{The rest of this is not necessarily true.}
 
 For $n$ tags to be calibrated, there are $2n$ unknown antenna delays and $n(n-1)$ measurements. When only TWR is to be utilized in the experiments, it is sufficient to calibrate only for the difference between the transmission and reception delay for every tag rather than the individual delays, thus halving the number of unknowns to $n$. This is due to the fact that the antenna delays only show as differences between the transmission and reception delays for each tag in TWR scenarios, as shown in \eqref{eq:dstwr_model_powerAndDelay}. Therefore, 3 tags are sufficient for the calibration procedure. When a new fourth tag is to be calibrated, there is only need for 2 tags in order to calibrate the one unknown.
 

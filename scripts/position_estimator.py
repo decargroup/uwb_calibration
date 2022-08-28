@@ -125,7 +125,7 @@ tag_ids={'ifo001': [1,2],
 moment_arms={'ifo001': [[0.15846,-0.16067,-0.07762], [-0.19711,0.14649,-0.082706]],
                 'ifo002': [[0.18620,-0.13653,-0.05268], [-0.16133,0.17290,-0.047776]],
                 'ifo003': [[0.18776,-0.16791,-0.08407], [-0.15605,0.14864,-0.079526]]}
-filename = "datasets/2022_08_03/bias_calibration/merged.bag"
+filename = "datasets/2022_08_03/bias_calibration_new2/merged.bag"
 raw_obj = PostProcess(filename,
                       tag_ids,
                       moment_arms,
@@ -164,8 +164,8 @@ uwb = {'range': range[idx_sorted],
 
 # %%
 ### --- Get CALIBRATED UWB measurements between main tag and all other tags --- ###
-if filename != "datasets/2022_08_03/bias_calibration_new2/merged.bag":
-    raw_obj_calib = PostProcess("datasets/2022_08_03/bias_calibration_new2/merged.bag",
+if filename != "datasets/2022_08_03/bias_calibration_new/merged.bag":
+    raw_obj_calib = PostProcess("datasets/2022_08_03/bias_calibration_new/merged.bag",
                                 tag_ids,
                                 moment_arms,
                                 num_meas=-1)
@@ -175,7 +175,7 @@ else:
 calib_obj_og = UwbCalibrate(raw_obj_calib, rm_static=True)
 delays = calib_obj_og.calibrate_antennas()
 calib_obj_og.correct_antenna_delay(delays)
-calib_obj_og.fit_model(std_window=25, chi_thresh=16.8, merge_pairs=True)
+calib_obj_og.fit_model(std_window=25, chi_thresh=22.8, merge_pairs=True)
 
 calib_obj = UwbCalibrate(raw_obj, rm_static=False)
 calib_obj.correct_antenna_delay(delays)
@@ -225,7 +225,7 @@ for machine in tag_ids:
 mocap = {'r':r, 'v':v}
 
 # %%
-np.random.seed(1)
+np.random.seed(10)
 
 estimator = PositionEstimator(ids=tag_ids, 
                                 moment_arms=moment_arms,
@@ -235,7 +235,7 @@ estimator = PositionEstimator(ids=tag_ids,
                                 tag = main_tag, 
                                 filter_inputs=True,
                                 visualize = True)
-r_hist, P_hist = estimator.run_kf(Q=np.eye(3)*0.5,R=0.1)
+r_hist, P_hist = estimator.run_kf(Q=np.eye(3)*0.5/5,R=0.15*2)
 
 # TODO: Use std_spl
 estimator_calib = PositionEstimator(ids=tag_ids, 
@@ -248,7 +248,7 @@ estimator_calib = PositionEstimator(ids=tag_ids,
                                     visualize = True,
                                     std_spl = calib_obj_og.std_spl
                                     )
-r_hist_calib, P_hist_calib = estimator_calib.run_kf(Q=np.eye(3)*0.5,R=1)
+r_hist_calib, P_hist_calib = estimator_calib.run_kf(Q=np.eye(3)*0.5/5,R=1*2)
 
 # %%
 fig,axs = plt.subplots(3,1, sharex='all', sharey='all')
@@ -262,7 +262,7 @@ axs[0].fill_between(t,
             3*np.sqrt(P_hist_calib[0,0,:]),
             'blue',
             alpha=0.8,
-            label=r"99.97% confidence interval",
+            label=r"99.7% confidence interval",
             )
 
 axs[0].fill_between(t,
@@ -270,7 +270,7 @@ axs[0].fill_between(t,
             3*np.sqrt(P_hist[0,0,:]),
             'red',
             alpha=0.5,
-            label=r"99.97% confidence interval",
+            label=r"99.7% confidence interval",
             )
 
 axs[0].set_xlabel(r'$t$ [s]')
@@ -284,7 +284,7 @@ axs[1].fill_between(t,
             3*np.sqrt(P_hist_calib[1,1,:]),
             'blue',
             alpha=0.8,
-            label=r"99.97% confidence interval",
+            label=r"99.7% confidence interval",
             )
 
 axs[1].fill_between(t,
@@ -292,7 +292,7 @@ axs[1].fill_between(t,
             3*np.sqrt(P_hist[1,1,:]),
             'red',
             alpha=0.5,
-            label=r"99.97% confidence interval",
+            label=r"99.7% confidence interval",
             )
 
 axs[1].set_xlabel(r'$t$ [s]')
@@ -306,7 +306,7 @@ axs[2].fill_between(t,
             3*np.sqrt(P_hist_calib[2,2,:]),
             'blue',
             alpha=0.8,
-            label=r"99.97% confidence interval",
+            label=r"99.7% confidence interval",
             )
 
 axs[2].fill_between(t,
@@ -314,7 +314,7 @@ axs[2].fill_between(t,
             3*np.sqrt(P_hist[2,2,:]),
             'red',
             alpha=0.5,
-            label=r"99.97% confidence interval",
+            label=r"99.7% confidence interval",
             )
 
 axs[2].set_xlabel(r'$t$ [s]')

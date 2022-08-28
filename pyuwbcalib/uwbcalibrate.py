@@ -425,7 +425,7 @@ class UwbCalibrate(object):
         strides = a.strides + (a.strides[-1],)
         return np.lib.stride_tricks.as_strided(a, shape=shape, strides=strides)
 
-    def _reject_outliers(self, bias, lifted_pr, std_window, chi_thresh, axs):
+    def _reject_outliers(self, bias, lifted_pr, std_window, chi_thresh, axs, axs_std):
         '''
         keep fitting models and rejecting outliers until no more outliers
         '''
@@ -433,17 +433,19 @@ class UwbCalibrate(object):
         outlier_lifted_pr = np.empty(0,)
         while True:
             # Fit 
-            bias_std = np.std(self._rolling_window(bias.ravel(), std_window), axis=-1)
+            windows = self._rolling_window(bias.ravel(), std_window)
+            bias_std = np.std(windows - np.mean(windows).reshape(-1,1), axis=-1)
             std_spl = UnivariateSpline(lifted_pr, bias_std, k=3)
-            bias_std = std_spl(lifted_pr)
+            bias_std_new = std_spl(lifted_pr)
 
             # Fit spline
-            spl = UnivariateSpline(lifted_pr, bias,k=3)
+            spl = UnivariateSpline(lifted_pr, bias, k=3)
             bias_fit = spl(lifted_pr)
 
             # Remove outliers
-            norm_e_squared = (bias - bias_fit)**2 / bias_std**2
-            outliers = norm_e_squared > chi_thresh
+            norm_e_squared = (bias - bias_fit)**2 / bias_std_new**2
+            # outliers = norm_e_squared > chi_thresh
+            outliers = np.abs(bias - bias_fit) > 1
             if np.sum(outliers):
                 outlier_bias = np.hstack((outlier_bias, bias[outliers]))
                 bias = bias[~outliers]
@@ -458,6 +460,11 @@ class UwbCalibrate(object):
         axs.scatter(outlier_lifted_pr, outlier_bias)
         axs.set_xlabel(r"$f(P_r)$")
         axs.set_ylabel(r"Bias [m]")
+
+        axs_std.scatter(lifted_pr, bias_std)
+        axs_std.scatter(lifted_pr, bias_std_new)
+        axs_std.set_xlabel(r"$f(P_r)$")
+        axs_std.set_ylabel(r"Bias Standard Deviation [m]")
 
         return spl, std_spl, bias, lifted_pr
 
@@ -477,7 +484,9 @@ class UwbCalibrate(object):
         fig, axs = plt.subplots(4,int(np.ceil((num_pairs+1)/4)),sharey='all',sharex='all')
         fig2, axs2 = plt.subplots(2,1) 
         fig3, axs3 = plt.subplots(4,int(np.ceil((num_pairs+1)/4)),sharey='all',sharex='all') 
+        fig4, axs4 = plt.subplots(4,int(np.ceil((num_pairs+1)/4)),sharey='all',sharex='all') 
         fig3.suptitle(r"Outlier rejection")
+        fig4.suptitle(r"Standard Deviation Fit")
         axs[0,0].set_ylabel(r"Bias [m]")
 
         self.mean_spline = {pair:[] for pair in addressed_pairs}
@@ -505,7 +514,7 @@ class UwbCalibrate(object):
                                       + 0.5*self.lift(self.ts_data[opposite_pair][:,self.fpp2_idx]))
                 r_gt_unsorted = np.append(r_gt_unsorted, self.time_intervals[opposite_pair]["r_gt"])
 
-            pr_thresh = 1.75
+            pr_thresh = 1.8
             bias = bias[lifted_pr < pr_thresh]
             r_gt_unsorted = r_gt_unsorted[lifted_pr < pr_thresh]
             lifted_pr = lifted_pr[lifted_pr < pr_thresh]   
@@ -516,8 +525,15 @@ class UwbCalibrate(object):
             lifted_pr = lifted_pr[sort_pr]
             r_gt = r_gt_unsorted[sort_pr]
 
+            row = np.mod(lv0,4)
+            col = int(np.floor(lv0/4))
             spl, std_spl, bias_trunc, lifted_pr_trunc \
-                        = self._reject_outliers(bias, lifted_pr, std_window, chi_thresh, axs3[np.mod(lv0,4),int(np.floor(lv0/4))])
+                        = self._reject_outliers(bias, 
+                                                lifted_pr, 
+                                                std_window, 
+                                                chi_thresh, 
+                                                axs3[row,col],
+                                                axs4[row,col])
             self.mean_spline[pair] = spl
             self.std_spline[pair] = std_spl
             bias_std = std_spl(lifted_pr)
@@ -547,14 +563,15 @@ class UwbCalibrate(object):
             # axs[2,lv0].set_xlabel(r"Ground truth distance [m]")
 
             ### PLOT 2 ### Plot with all splines
-            axs2[0].plot(lifted_pr, bias_fit, label=r"Pair "+str(pair))
-            axs2[0].legend(loc='upper right')
+            if lv0 == 0:
+                axs2[0].plot(lifted_pr, bias_fit, label="Individual Pairs", linewidth=0.5, color='b')
+            else:
+                axs2[0].plot(lifted_pr, bias_fit, linewidth=0.5, color='b')
             axs2[0].set_xlabel(r"$f(P_r)$")
             axs2[0].set_ylabel(r"Bias [m]")
             fig2.suptitle(r"Bias-Power Fit")
 
-            axs2[1].plot(lifted_pr, bias_std, label=r"Pair "+str(pair))
-            axs2[1].legend()
+            axs2[1].plot(lifted_pr, bias_std, linewidth=0.5, color='b')
             axs2[1].set_xlabel(r"$f(P_r)$")
             axs2[1].set_ylabel(r"Bias Std [m]")
 
@@ -578,12 +595,15 @@ class UwbCalibrate(object):
         spl = UnivariateSpline(self._all_spline_data['lifted_pr_trunc'], self._all_spline_data['bias'])
         bias_fit = spl(self._all_spline_data['lifted_pr'])
 
+        row = np.mod(lv0+1,4)
+        col = int(np.floor((lv0+1)/4))
         spl, std_spl, bias_trunc, lifted_pr_trunc \
                         = self._reject_outliers(self._all_spline_data['bias'], 
                                                 self._all_spline_data['lifted_pr_trunc'], 
                                                 std_window, 
                                                 chi_thresh, 
-                                                axs3[np.mod(lv0+1,4),int(np.floor((lv0+1)/4))])
+                                                axs3[row,col],
+                                                axs4[row,col])
 
         bias_std = std_spl( self._all_spline_data['lifted_pr'])
         bias_fit = spl( self._all_spline_data['lifted_pr'])
@@ -603,14 +623,13 @@ class UwbCalibrate(object):
         )
         axs[np.mod(lv0+1,4),int(np.floor((lv0+1)/4))].set_xlabel(r"$f(P_r)$")
 
-        axs2[0].plot(self._all_spline_data['lifted_pr'], bias_fit, label=r"All", linewidth=3)
+        axs2[0].plot(self._all_spline_data['lifted_pr'], bias_fit, label=r"Average", linewidth=3, color='r')
         axs2[0].legend(loc='upper right')
         axs2[0].set_xlabel(r"$f(P_r)$")
         axs2[0].set_ylabel(r"Bias [m]")
         fig2.suptitle(r"Bias-Power Fit")
 
-        axs2[1].plot(self._all_spline_data['lifted_pr'], bias_std, label=r"All", linewidth=3)
-        axs2[1].legend()
+        axs2[1].plot(self._all_spline_data['lifted_pr'], bias_std, linewidth=3, color='r')
         axs2[1].set_xlabel(r"$f(P_r)$")
         axs2[1].set_ylabel(r"Bias Std [m]")
 
