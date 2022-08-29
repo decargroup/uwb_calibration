@@ -148,7 +148,7 @@ axs[0].legend()
 plt.show(block=True)
 # %% TESTING
 # Load datasets
-raw_obj2 = PostProcess("datasets/2022_08_03/bias_calibration_new2/merged.bag",
+raw_obj2 = PostProcess("datasets/2022_08_03/bias_calibration/merged.bag",
                        tag_ids,
                        moment_arms,
                        num_meas=-1)
@@ -157,6 +157,13 @@ calib_obj2 = UwbCalibrate(raw_obj2, rm_static=True)
 
 # %%
 # Processing
+
+## Find earliest time recorded
+t0 = np.Inf
+for pair_i in calib_obj2.ts_data:
+    t_i = calib_obj2.ts_data[pair_i][0,0]/1e9
+    if t_i < t0:
+        t0 = t_i
 
 ## Pre-calibration
 num_pairs = len(calib_obj2.ts_data)
@@ -179,7 +186,7 @@ for lv0, pair_i in enumerate(calib_obj2.ts_data):
                   + 0.5*calib_obj2.lift(calib_obj2.ts_data[pair_i][:,calib_obj2.fpp2_idx])
     lifted_pr[sorted_pair] = np.hstack((lifted_pr[sorted_pair],lifted_pr_i))
 
-    t_i = calib_obj2.ts_data[pair_i][:,0] - calib_obj2.ts_data[pair_i][0,0]
+    t_i = calib_obj2.ts_data[pair_i][:,0]/1e9 - t0
     t[sorted_pair] = np.hstack((t[sorted_pair],t_i))
 
     gt_i = calib_obj2.time_intervals[pair_i]["r_gt"]

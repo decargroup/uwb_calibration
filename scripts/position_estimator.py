@@ -7,7 +7,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
-matplotlib.use('Qt5Agg')
+# matplotlib.use('Qt5Agg')
 
 sns.set_theme()
 
@@ -120,11 +120,11 @@ class PositionEstimator(object):
 # TODO: move a bunch of these, like get_velocity, to PostProcess
 # if __name__ == "__main__":
 tag_ids={'ifo001': [1,2],
-            'ifo002': [3,4],
-            'ifo003': [5,6]}
-moment_arms={'ifo001': [[0.15846,-0.16067,-0.07762], [-0.19711,0.14649,-0.082706]],
-                'ifo002': [[0.18620,-0.13653,-0.05268], [-0.16133,0.17290,-0.047776]],
-                'ifo003': [[0.18776,-0.16791,-0.08407], [-0.15605,0.14864,-0.079526]]}
+         'ifo002': [3,4],
+         'ifo003': [5,6]}
+moment_arms={'ifo001': [[0.13189,-0.17245,-0.05249], [-0.17542,0.15712,-0.05307]],
+             'ifo002': [[0.16544,-0.15085,-0.03456], [-0.15467,0.16972,-0.01680]],
+             'ifo003': [[0.16685,-0.18113,-0.05576], [-0.13485,0.15468,-0.05164]]}
 filename = "datasets/2022_08_03/bias_calibration_new2/merged.bag"
 raw_obj = PostProcess(filename,
                       tag_ids,
@@ -273,7 +273,7 @@ axs[0].fill_between(t,
             label=r"99.7% confidence interval",
             )
 
-axs[0].set_xlabel(r'$t$ [s]')
+axs[0].set_ylim(-2,2)
 axs[0].set_ylabel(r'$e_x$ [m]')
 
 axs[1].plot(t,r_hist_calib[1] - mocap['r'][main_tag][1], 'blue')
@@ -295,7 +295,7 @@ axs[1].fill_between(t,
             label=r"99.7% confidence interval",
             )
 
-axs[1].set_xlabel(r'$t$ [s]')
+axs[1].set_ylim(-2,2)
 axs[1].set_ylabel(r'$e_y$ [m]')
 
 axs[2].plot(t,r_hist_calib[2] - mocap['r'][main_tag][2], 'blue')
@@ -317,12 +317,13 @@ axs[2].fill_between(t,
             label=r"99.7% confidence interval",
             )
 
+axs[2].set_ylim(-2,2)
 axs[2].set_xlabel(r'$t$ [s]')
 axs[2].set_ylabel(r'$e_z$ [m]')
 
 axs[0].legend(loc='upper right')
 
-fig,axs = plt.subplots(1)
+fig2,axs = plt.subplots(1)
 
 axs.plot(np.linalg.norm(r_hist_calib - mocap['r'][main_tag], axis=0), 'blue')
 axs.plot(np.linalg.norm(r_hist - mocap['r'][main_tag], axis=0), 'orange')
@@ -332,7 +333,8 @@ axs.plot(np.linalg.norm(r_hist - mocap['r'][main_tag], axis=0), 'orange')
 print(np.mean(np.linalg.norm(r_hist_calib - mocap['r'][main_tag], axis=0)))
 print(np.mean(np.linalg.norm(r_hist - mocap['r'][main_tag], axis=0)))
 
-
+fig.savefig('figs/pos_estimator_3sigma_bound.pdf')
+fig2.savefig('figs/pos_estimator_error_norm.pdf')
 
 plt.show(block=True)
 
