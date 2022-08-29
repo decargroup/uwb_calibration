@@ -1,4 +1,5 @@
 # %%
+from turtle import position
 from pyuwbcalib.uwbcalibrate import UwbCalibrate
 from pyuwbcalib.postprocess import PostProcess
 import matplotlib
@@ -6,6 +7,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 matplotlib.use('Qt5Agg')
+from matplotlib import rc
+rc('text', usetex=True)
 
 sns.set_theme()
 
@@ -148,7 +151,7 @@ axs[0].legend()
 plt.show(block=True)
 # %% TESTING
 # Load datasets
-raw_obj2 = PostProcess("datasets/2022_08_03/bias_calibration/merged.bag",
+raw_obj2 = PostProcess("datasets/2022_08_03/bias_calibration_new2/merged.bag",
                        tag_ids,
                        moment_arms,
                        num_meas=-1)
@@ -244,6 +247,7 @@ for i,pair_i in enumerate(t):
 
 # PLOT 2: Bias and std, each as a subplot
 fig = plt.figure()
+fig.subplots_adjust(hspace = 0.5)
 
 for i,pair_i in enumerate(t):
     ax = plt.subplot(num_rows, num_columns, i+1) 
@@ -251,21 +255,43 @@ for i,pair_i in enumerate(t):
     bias = meas_calib[pair_i] - gt[pair_i]
     eps = bias**2 / std_calib[pair_i]**2
     inliers = eps < 3.84
-    ax.scatter(t[pair_i][inliers],bias[inliers], s=1)
-    ax.scatter(t[pair_i][~inliers],bias[~inliers], s=1)
-    ax.set_ylim(-0.5,1)
-
-    ax.fill_between(t[pair_i],
+    if i==0:
+        ax.scatter(t[pair_i][inliers],bias[inliers], s=1, label=r"Inliers")
+        ax.scatter(t[pair_i][~inliers],bias[~inliers], s=1, label=r"Outliers")
+        ax.fill_between(t[pair_i],
             -2*std_calib[pair_i],
             2*std_calib[pair_i],
-            'blue',
+            color='b',
             alpha=0.5,
-            label=r"95% confidence interval",
+            label=r"95\% confidence interval",
             )
-    perc_inliers = np.sum(inliers)/len(eps)*100
-    ax.set_title('Pair '+str(pair_i)+': %2.2f%% inliers' % perc_inliers)
+    else:
+        ax.scatter(t[pair_i][inliers],bias[inliers], s=1)
+        ax.scatter(t[pair_i][~inliers],bias[~inliers], s=1)
+        ax.fill_between(t[pair_i],
+            -2*std_calib[pair_i],
+            2*std_calib[pair_i],
+            color='b',
+            alpha=0.5,
+            )
+    ax.set_ylim(-0.5,1)
+    
+    if np.mod(i,2) == 0:
+        ax.set_ylabel(r'Range Bias [m]', fontsize=16)
+    
+    if i >= num_rows*num_columns-2:
+        ax.set_xlabel(r'Time [s]', fontsize=16)
 
-fig.tight_layout()
+    mean_inlier_error = np.mean(bias[inliers])
+    std_inlier_error = np.std(bias[inliers])
+    perc_inliers = np.sum(inliers)/len(eps)*100
+    pair_print = str((int(pair_i[0]),int(pair_i[1])))
+    ax.set_title(r'\textbf{Pair}: '+pair_print+r', \textbf{Inliers}: %2.2f\%%, \textbf{Mean}: %1.3f [cm], \textbf{Standard deviation}: %1.3f [cm]' % (perc_inliers, mean_inlier_error*100, std_inlier_error*100), fontsize=16)
+
+fig.suptitle(r"Test-Data Calibrated Measurements", fontsize=36)
+lgnd = fig.legend(fontsize=20)
+lgnd.legendHandles[0]._sizes = [30]
+lgnd.legendHandles[1]._sizes = [30]
 
 # PLOT 3: Histogram of all biases in one plot
 all_bias_old = np.array([])
@@ -281,16 +307,17 @@ for pair_i in t:
     all_t = np.hstack((all_t, t[pair_i]))
 
 fig,axs = plt.subplots(3,1,sharex=True, sharey=True)
-bins = np.linspace(-0.5,1,125)
-axs[0].hist(all_bias_old, bins=bins, density=True, alpha=0.5, color='b')
-axs[0].hist(all_bias_delay, bins=bins, density=True, alpha=0.5, color='r')
+bins = np.linspace(-0.4,0.6,125)
+axs[0].hist(all_bias_old, bins=bins, density=True, alpha=0.5, color='b', label='Raw')
+axs[0].hist(all_bias_delay, bins=bins, density=True, alpha=0.5, color='r', label='Antenna-Delay Calibrated')
 axs[1].hist(all_bias_old, bins=bins, density=True, alpha=0.5, color='b')
-axs[1].hist(all_bias_calib, bins=bins, density=True, alpha=0.5, color='g')
+axs[1].hist(all_bias_calib, bins=bins, density=True, alpha=0.5, color='g', label='Fully Calibrated')
 axs[2].hist(all_bias_delay, bins=bins, density=True, alpha=0.5, color='r')
 axs[2].hist(all_bias_calib, bins=bins, density=True, alpha=0.5, color='g')
-# IDEA: check proportion of the measurements falling outside the 95% bounds. should be 5%.
-# Could use NIS here to reject outliers and then show 5% are rejected as outliers,
-# then explain we do NIS here using GT but in real life we would using state estimates
-# IDEA2: report all above for one more experiment at least
+
+fig.legend(fontsize=20)
+fig.suptitle(r"Calibration Results on Test Data", fontsize=36)
+axs[2].set_xlabel(r"Range Bias [m]", fontsize=16)
+
 plt.show(block=True)
 # %%
