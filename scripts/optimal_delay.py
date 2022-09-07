@@ -14,8 +14,8 @@ sns.set_theme()
 
 # %% Import all data into a dataframe
 
-folder_path = 'datasets/2022_08_09_optimal_delay/D1_1500'
-# folder_path = 'datasets/2022_08_05_optimal_delay'
+# folder_path = 'datasets/2022_08_09_optimal_delay/D1_1500'
+folder_path = 'datasets/2022_08_05_optimal_delay'
 
 # Initialize empty dataframe
 df = pd.DataFrame(columns=['delay','freq','data'])
@@ -54,47 +54,47 @@ df['Rt'] = df.apply(lambda df: get_Rt(df.exp_std, df.freq), axis=1)
 
 # %% 
 # Experimentally-determined parameters
-# T = 0.0045 # total length of TWR transaction, minus second-response delay [s]
-# del_t2 = 0.0003 # first-response delay [s]
-T = 0.010 # total length of TWR transaction, minus second-response delay [s]
-del_t2 = 0.0015 # first-response delay [s]
+T = 0.0045 # total length of TWR transaction, minus second-response delay [s]
+del_t2 = 0.0003 # first-response delay [s]
+# T = 0.010 # total length of TWR transaction, minus second-response delay [s]
+# del_t2 = 0.0015 # first-response delay [s]
 R = 1/175 # Uncertainty of an individual measurement [ns^2]
 
 # 100 linearly spaced numbers
-x = np.linspace(0,0.0065,1000)
+x = np.linspace(0.00025,0.00675,1000)
 
 # the function
 y = (T+x)*R + del_t2*T*R/x + del_t2*R + del_t2**2*T*R/x**2 + del_t2**2*R/x
 
-# %% 
-## Plot FFT of std error 
+# # %% 
+# ## Plot FFT of std error 
 
-# New dataframe 
-df_fft = df[['delay','exp_std']].copy()
+# # New dataframe 
+# df_fft = df[['delay','exp_std']].copy()
 
-# Remove outliers
-df_fft.drop(df_fft[df_fft.delay > 6500].index, inplace=True)
+# # Remove outliers
+# df_fft.drop(df_fft[df_fft.delay > 6500].index, inplace=True)
 
-# Average out stds of measurements with same delay
-df_fft = df_fft.groupby('delay', as_index=False)['exp_std'].mean()
+# # Average out stds of measurements with same delay
+# df_fft = df_fft.groupby('delay', as_index=False)['exp_std'].mean()
 
-# Interpolate 
-df_fft.set_index(df_fft['delay'], drop=True, inplace=True)
-df_fft = df_fft.reindex(np.linspace(410,6499,(6499-410)+1))
-df_fft.interpolate(method='linear', inplace=True)
+# # Interpolate 
+# df_fft.set_index(df_fft['delay'], drop=True, inplace=True)
+# df_fft = df_fft.reindex(np.linspace(410,6499,(6499-410)+1))
+# df_fft.interpolate(method='linear', inplace=True)
 
-delay = np.array(df_fft['delay']/1e6, dtype=float).copy()
-exp_std = np.array(df_fft['exp_std'])
+# delay = np.array(df_fft['delay']/1e6, dtype=float).copy()
+# exp_std = np.array(df_fft['exp_std'])
 
-diff = np.array(exp_std-np.sqrt(R + del_t2/delay*R + (del_t2/delay)**2*R))
-n = diff.shape[0]
-data_fft = np.abs(fft.rfft(diff) / n)
-f = fft.rfftfreq(n,d=1e-6)
-plt.semilogx(f, data_fft)
-plt.xlabel(r'Frequency [Hz]')
-plt.title(r'FFT on standard deviation error vs. Second-response delay')
-# plt.scatter(delay,diff)
-plt.show(block=True)
+# diff = np.array(exp_std-np.sqrt(R + del_t2/delay*R + (del_t2/delay)**2*R))
+# n = diff.shape[0]
+# data_fft = np.abs(fft.rfft(diff) / n)
+# f = fft.rfftfreq(n,d=1e-6)
+# plt.semilogx(f, data_fft)
+# plt.xlabel(r'Frequency [Hz]')
+# plt.title(r'FFT on standard deviation error vs. Second-response delay')
+# # plt.scatter(delay,diff)
+# plt.show(block=True)
 # %% 
 ## Fit spline to Rt 
 
@@ -134,31 +134,58 @@ Rt_smoothed = csaps(delay, df['Rt'], delay, smooth=0.5)
 # Rt_smoothed = csaps(delay_new, Rt_smoothed, delay, smooth=0.5)
 
 # %%
+# %% Plotting figure 0
+fig, axs = plt.subplots(1)
+
+# Subplot 1: Rt
+axs.plot(x*1e6,(np.sqrt(y)/1e9*_c*100)**2, 'r', linewidth=3)
+axs.set_ylabel(r'$R_t$ [cm$^2$]', fontsize=50)
+axs.set_xlabel(r'Second-Response Delay $\Delta t_4$ [$\mu$s]', fontsize=50)
+
+axs.tick_params(axis='both', labelsize=50)
+
+fig.set_size_inches(44, 19)
+fig.savefig("figs/optimal_delay.pdf", dpi=1200)
+
 # Plotting figure 1
 fig, axs = plt.subplots(3,1, sharex='all')
 
 # Subplot 1: Rt
-axs[0].scatter(delay, df['Rt'], label=r'Experimental', s=1)
+axs[0].scatter(delay*1e6, (np.sqrt(df['Rt'])/1e9*_c*100)**2, label=r'Experimental', s=1)
 # axs[0].plot(delay, Rt_smoothed, label=r'Experimental')
-axs[0].plot(x,y, 'r', label=r'Theoretical')
-axs[0].legend()
-axs[0].set_ylim(0,0.0025)
-# axs[0].set_ylim(0,0.00025)
-axs[0].set_ylabel(r'$R_t$ [ns$^2$]')
+axs[0].plot(x*1e6,(np.sqrt(y)/1e9*_c*100)**2, 'r', label=r'Theoretical', linewidth=3)
+# axs[0].set_ylim(0,2)
+axs[0].set_ylim(0,0.2)
+axs[0].set_ylabel(r'$R_t$ [cm$^2$]', fontsize=50)
 
 # Subplot 2: std
-axs[1].scatter(delay, df['exp_std'], label=r'Experimental', s=1)
-axs[1].set_ylabel(r'Standard Deviation [ns]')
-axs[1].plot(x, np.sqrt(R + del_t2/x*R + (del_t2/x)**2*R),
-            label=r'Theoretical', color='r')
-axs[1].set_ylim(0,0.5)
+axs[1].scatter(delay*1e6, df['exp_std']/1e9*_c*100, s=1)
+axs[1].set_ylabel(r'Std. [cm]', fontsize=50)
+axs[1].plot(x*1e6, np.sqrt(R + del_t2/x*R + (del_t2/x)**2*R)/1e9*_c*100, color='r', linewidth=3)
+# axs[1].set_ylim(0,16)
+axs[1].set_ylim(1,7)
+axs[1].set_yticks([2,4,6])
 
 # Subplot 3: freq
-axs[2].scatter(delay, df['freq'], label=r'Experimental', s=1)
-axs[2].plot(delay, 1/(delay+T), label=r'Theoretical', color='r')
-axs[2].set_ylabel(r'Frequency [Hz]')
-axs[2].set_xlabel(r'Second-Response Delay [s]')
-axs[2].set_xlim(0,0.007)
+axs[2].scatter(delay*1e6, df['freq'], s=1)
+axs[2].plot(x*1e6, 1/(x+T), color='r', linewidth=3)
+axs[2].set_ylabel(r'Frequency [Hz]', fontsize=50)
+axs[2].set_xlabel(r'Second-Response Delay $\Delta t_4$ [$\mu$s]', fontsize=50)
+# axs[2].set_ylim(50,125)
+axs[2].set_yticks([100,150,200])
+
+
+axs[0].tick_params(axis='both', labelsize=50)
+axs[1].tick_params(axis='both', labelsize=50)
+axs[2].tick_params(axis='both', labelsize=50)
+
+axs[2].set_xlim(0,7000)
+
+lgnd = fig.legend(fontsize=50, ncol=2, loc='upper center')
+lgnd.legendHandles[1]._sizes = [150]
+
+fig.set_size_inches(44, 19)
+fig.savefig("figs/optimal_delay_metrics.pdf", dpi=1200)
 
 # Plotting figure 2
 fig, axs = plt.subplots(1,1)
@@ -166,7 +193,7 @@ i = 0
 print(df.iloc[i])
 n = len(df.iloc[i]['data'])
 axs.scatter(np.linspace(0,n,n),df.iloc[i]['data'])
-axs.set_ylim(1.5,2.5)
+# axs.set_ylim(1.5,2.5)
 axs.set_ylabel(r'Range Measurement [m]')
 axs.set_xlabel(r'Measurement Number')
 

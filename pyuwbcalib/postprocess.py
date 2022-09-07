@@ -74,9 +74,9 @@ class PostProcess(object):
         self.r = r
         self.rot = rot
 
-        for machine in t_sec:
-            # Unwrap the clock
-            t_nsec[machine] = self._unwrap_gt(t_sec[machine], t_nsec[machine], 1e9)
+        # for machine in t_sec:
+        #     # Unwrap the clock
+        #     t_nsec[machine] = self._unwrap_gt(t_sec[machine], t_nsec[machine], 1e9)
             
         self.t_r = t_nsec
         
@@ -115,8 +115,8 @@ class PostProcess(object):
             data_pd = pd.read_csv(data)
 
             # Timestamps.
-            t_sec[machine] = np.array(data_pd['header.stamp.secs'])
-            t_nsec[machine] = np.array(data_pd['header.stamp.nsecs'])
+            t_sec[machine] = np.floor(data_pd["Time"])*0
+            t_nsec[machine] = data_pd["header.stamp.secs"] + data_pd["header.stamp.nsecs"]/1e9
             
             # Pose.
             r[machine] = np.array((data_pd['pose.position.x'],
@@ -234,8 +234,8 @@ class PostProcess(object):
                 if (initiator_id not in self.tag_ids[machine]):
                     continue
 
-                temp = np.array([row["header.stamp.nsecs"],
-                                 row["header.stamp.secs"],
+                temp = np.array([row["header.stamp.secs"] + row["header.stamp.nsecs"]/1e9,
+                                 np.floor(row["Time"])*0,
                                  row["range"],
                                  row["tx1"]*self._to_ns,
                                  row["rx1"]*self._to_ns,
@@ -323,7 +323,7 @@ class PostProcess(object):
         Interpolate the computed ground truth distance to the timestamps where measurements 
         were recorded.
         """
-        for pair in self.tag_pairs:
+        for i,pair in enumerate(self.tag_pairs):
             t_new = self.time_intervals[pair]["t"]
             try:
                 r = self._gt_distance[pair]["dist"]
@@ -404,8 +404,8 @@ class PostProcess(object):
                 iter_rx3 = 1
 
             # Individual unwraps
-            self.ts_data[pair][:,0] \
-                = self._unwrap_gt(self.ts_data[pair][:,1], self.ts_data[pair][:,0], 1e9)
+            # self.ts_data[pair][:,0] \
+            #     = self._unwrap_gt(self.ts_data[pair][:,1], self.ts_data[pair][:,0], 1e9)
             
             self.ts_data[pair][:,self.tx1_idx] \
                 = self._unwrap(self.ts_data[pair][:,self.tx1_idx], max_time_ns)

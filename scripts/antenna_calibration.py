@@ -12,7 +12,10 @@ rc('text', usetex=True)
 
 sns.set_theme()
 
-tag_ids={'ifo001': [1,2],
+# tag_ids={'ifo001': [1,2],
+#          'ifo002': [3,4],
+#          'ifo003': [5,6]}
+tag_ids={'ifo001': [1,7],
          'ifo002': [3,4],
          'ifo003': [5,6]}
 # moment_arms={'ifo001': [[0.15846,-0.16067,-0.07762], [-0.19711,0.14649,-0.082706]],
@@ -21,7 +24,7 @@ tag_ids={'ifo001': [1,2],
 moment_arms={'ifo001': [[0.13189,-0.17245,-0.05249], [-0.17542,0.15712,-0.05307]],
              'ifo002': [[0.16544,-0.15085,-0.03456], [-0.15467,0.16972,-0.01680]],
              'ifo003': [[0.16685,-0.18113,-0.05576], [-0.13485,0.15468,-0.05164]]}
-raw_obj = PostProcess("datasets/2022_08_03/bias_calibration_new/merged.bag",
+raw_obj = PostProcess("datasets/2022_09_01_tag7/bias_calibration0/merged.bag",
                       tag_ids,
                       moment_arms,
                       num_meas=-1)
@@ -151,12 +154,12 @@ axs[0].legend()
 plt.show(block=True)
 # %% TESTING
 # Load datasets
-raw_obj2 = PostProcess("datasets/2022_08_03/bias_calibration_new2/merged.bag",
+raw_obj2 = PostProcess("datasets/2022_09_01_tag7/random2/merged.bag",
                        tag_ids,
                        moment_arms,
                        num_meas=-1)
 
-calib_obj2 = UwbCalibrate(raw_obj2, rm_static=True)
+calib_obj2 = UwbCalibrate(raw_obj2, rm_static=False)
 
 # %%
 # Processing
@@ -164,7 +167,7 @@ calib_obj2 = UwbCalibrate(raw_obj2, rm_static=True)
 ## Find earliest time recorded
 t0 = np.Inf
 for pair_i in calib_obj2.ts_data:
-    t_i = calib_obj2.ts_data[pair_i][0,0]/1e9
+    t_i = calib_obj2.ts_data[pair_i][0,0]
     if t_i < t0:
         t0 = t_i
 
@@ -189,7 +192,7 @@ for lv0, pair_i in enumerate(calib_obj2.ts_data):
                   + 0.5*calib_obj2.lift(calib_obj2.ts_data[pair_i][:,calib_obj2.fpp2_idx])
     lifted_pr[sorted_pair] = np.hstack((lifted_pr[sorted_pair],lifted_pr_i))
 
-    t_i = calib_obj2.ts_data[pair_i][:,0]/1e9 - t0
+    t_i = calib_obj2.ts_data[pair_i][:,0] - t0
     t[sorted_pair] = np.hstack((t[sorted_pair],t_i))
 
     gt_i = calib_obj2.time_intervals[pair_i]["r_gt"]
@@ -241,9 +244,12 @@ fig = plt.figure()
 for i,pair_i in enumerate(t):
     ax = plt.subplot(num_rows, num_columns, i+1) 
     ax.plot(t[pair_i],gt[pair_i])
-    ax.plot(t[pair_i],meas_old[pair_i])
-    ax.plot(t[pair_i],meas_calib[pair_i])
+    ax.scatter(t[pair_i],meas_old[pair_i],color='darkorange',s=1)
+    ax.scatter(t[pair_i],meas_calib[pair_i],color='green',s=1)
     ax.set_ylim(0,5)
+    ax.set_title(str(pair_i))
+
+fig.legend(['Ground Truth', 'Raw', 'Calibrated'])
 
 # PLOT 2: Bias and std, each as a subplot
 fig = plt.figure()
@@ -254,7 +260,7 @@ for i,pair_i in enumerate(t):
     # ax.plot(t[pair_i],meas_old[pair_i] - gt[pair_i])
     bias = meas_calib[pair_i] - gt[pair_i]
     eps = bias**2 / std_calib[pair_i]**2
-    inliers = eps < 3.84
+    inliers = (eps < 3.84) & (np.abs(bias)<3)
     if i==0:
         ax.scatter(t[pair_i][inliers],bias[inliers], s=1, label=r"Inliers")
         ax.scatter(t[pair_i][~inliers],bias[~inliers], s=1, label=r"Outliers")
@@ -277,21 +283,28 @@ for i,pair_i in enumerate(t):
     ax.set_ylim(-0.5,1)
     
     if np.mod(i,2) == 0:
-        ax.set_ylabel(r'Range Bias [m]', fontsize=16)
+        ax.set_ylabel(r'Bias [m]', fontsize=40)
+        ax.set_yticks([-0.5, 0, 0.5])
+    else:
+        ax.set_yticks([])
     
     if i >= num_rows*num_columns-2:
-        ax.set_xlabel(r'Time [s]', fontsize=16)
+        ax.set_xlabel(r'Time [s]', fontsize=40)
+    else:
+        ax.set_xticks([])
 
     mean_inlier_error = np.mean(bias[inliers])
     std_inlier_error = np.std(bias[inliers])
     perc_inliers = np.sum(inliers)/len(eps)*100
     pair_print = str((int(pair_i[0]),int(pair_i[1])))
-    ax.set_title(r'\textbf{Pair}: '+pair_print+r', \textbf{Inliers}: %2.2f\%%, \textbf{Mean}: %1.3f [cm], \textbf{Standard deviation}: %1.3f [cm]' % (perc_inliers, mean_inlier_error*100, std_inlier_error*100), fontsize=16)
+    ax.set_title(r'\textbf{Pair}: '+pair_print+r', \textbf{Inliers}: %2.2f\%%, \textbf{Mean}: %1.3f [cm], \textbf{Std.}: %1.3f [cm]' % (perc_inliers, mean_inlier_error*100, std_inlier_error*100),
+                 fontsize=35)
+    ax.tick_params(axis='both', labelsize=40)
 
-fig.suptitle(r"Test-Data Calibrated Measurements", fontsize=36)
-lgnd = fig.legend(fontsize=20)
-lgnd.legendHandles[0]._sizes = [30]
-lgnd.legendHandles[1]._sizes = [30]
+# fig.suptitle(r"Test-Data Calibrated Measurements", fontsize=36)
+lgnd = fig.legend(fontsize=50, ncol=3, loc='upper center')
+lgnd.legendHandles[0]._sizes = [150]
+lgnd.legendHandles[1]._sizes = [150]
 
 # PLOT 3: Histogram of all biases in one plot
 all_bias_old = np.array([])
@@ -306,18 +319,35 @@ for pair_i in t:
     all_std_calib = np.hstack((all_std_calib, std_calib[pair_i]))
     all_t = np.hstack((all_t, t[pair_i]))
 
-fig,axs = plt.subplots(3,1,sharex=True, sharey=True)
-bins = np.linspace(-0.4,0.6,125)
-axs[0].hist(all_bias_old, bins=bins, density=True, alpha=0.5, color='b', label='Raw')
-axs[0].hist(all_bias_delay, bins=bins, density=True, alpha=0.5, color='r', label='Antenna-Delay Calibrated')
-axs[1].hist(all_bias_old, bins=bins, density=True, alpha=0.5, color='b')
-axs[1].hist(all_bias_calib, bins=bins, density=True, alpha=0.5, color='g', label='Fully Calibrated')
-axs[2].hist(all_bias_delay, bins=bins, density=True, alpha=0.5, color='r')
-axs[2].hist(all_bias_calib, bins=bins, density=True, alpha=0.5, color='g')
+# Remove large outliers
+idx = np.abs(all_bias_old)<3
+all_bias_old = all_bias_old[idx]
+all_bias_delay = all_bias_delay[idx]
+all_bias_calib = all_bias_calib[idx]
+all_std_calib = all_std_calib[idx]
+all_t = all_t[idx]
 
-fig.legend(fontsize=20)
-fig.suptitle(r"Calibration Results on Test Data", fontsize=36)
-axs[2].set_xlabel(r"Range Bias [m]", fontsize=16)
+# fig,axs = plt.subplots(3,1,sharex=True, sharey=True)
+# bins = np.linspace(-0.4,1,125)
+# axs[0].hist(all_bias_old, bins=bins, density=True, alpha=0.5, color='b', label='Raw')
+# axs[0].hist(all_bias_delay, bins=bins, density=True, alpha=0.5, color='r', label='Antenna-Delay Calibrated')
+# axs[1].hist(all_bias_old, bins=bins, density=True, alpha=0.5, color='b')
+# axs[1].hist(all_bias_calib, bins=bins, density=True, alpha=0.5, color='g', label='Fully Calibrated')
+# axs[2].hist(all_bias_delay, bins=bins, density=True, alpha=0.5, color='r')
+# axs[2].hist(all_bias_calib, bins=bins, density=True, alpha=0.5, color='g')
+
+fig,axs = plt.subplots(2,1,sharex=True, sharey=True)
+bins = np.linspace(-0.3,0.7,100)
+axs[0].hist(np.clip(all_bias_old, bins[0], bins[-1]), bins=bins, density=True, alpha=0.5, color='b', label='Raw')
+axs[0].hist(np.clip(all_bias_delay, bins[0], bins[-1]), bins=bins, density=True, alpha=0.5, color='r', label='Antenna-Delay Calibrated')
+axs[1].hist(np.clip(all_bias_delay, bins[0], bins[-1]), bins=bins, density=True, alpha=0.5, color='r')
+axs[1].hist(np.clip(all_bias_calib, bins[0], bins[-1]), bins=bins, density=True, alpha=0.5, color='g', label='Fully Calibrated')
+
+lgnd = fig.legend(fontsize=50, ncol=3, loc='upper center')
+# fig.suptitle(r"Calibration Results on Test Data", fontsize=36)
+axs[1].set_xlabel(r"Range Bias [m]", fontsize=50)
+axs[0].tick_params(axis='both', labelsize=50)
+axs[1].tick_params(axis='both', labelsize=50)
 
 plt.show(block=True)
 # %%
