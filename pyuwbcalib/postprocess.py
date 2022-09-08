@@ -30,10 +30,14 @@ class PostProcess(object):
     _c = 299702547 # speed of light
     _to_ns = 1e9 * (1.0 / 499.2e6 / 128.0) # DW time unit to nanoseconds
 
-    def __init__(self, file_path, tag_ids, moment_arms, mult_twr=True, num_meas=-1, ranging_with_self=False):
-        """
-        Constructor.
-        """
+    def __init__(self, 
+                 file_path,
+                 tag_ids, 
+                 moment_arms, 
+                 mult_twr=True, 
+                 num_meas=-1, 
+                 ranging_with_self=False):
+                 
         self.file_path = file_path
 
         self.tag_ids = tag_ids
