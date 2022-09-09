@@ -2,6 +2,13 @@ import numpy as np
 import pandas as pd
 from pylie import SO3
 from scipy.interpolate import interp1d
+import pickle
+
+def load(filename='data.pickle'):
+    with open(filename, 'rb') as pickle_file:
+        data = pickle.load(pickle_file)
+        
+    return data
 
 class PostProcess(object):
     """
@@ -79,7 +86,6 @@ class PostProcess(object):
     def _process_data(self, machines):
         self._store_data(machines)
         self._unwrap_all_clocks()
-        self._compute_intervals()
         
         if self.merge_pairs:
             self.df['pair'] = self.df['pair'].apply(sorted)
@@ -99,10 +105,12 @@ class PostProcess(object):
             all_dfs_passive = all_dfs_passive + [machines[machine].df_passive]
         
         self.df = pd.concat(all_dfs)
+        self.df.sort_values(by=["time"], inplace=True)
         self.df.reset_index(inplace=True, drop=True)
         
         if self.passive_listening:
             self.df_passive = pd.concat(all_dfs_passive)
+            self.df_passive.sort_values(by=["time"], inplace=True)
             self.df_passive.reset_index(inplace=True, drop=True)
             
             self._match_uwb_data()
@@ -113,16 +121,30 @@ class PostProcess(object):
                                                 self._match_tx_ts, 
                                                 axis=1
                                              )
+        self.df_passive.drop(columns=['tx1_n',
+                                      'tx2_n',
+                                      'tx3_n',
+                                      'rx1_n',
+                                      'rx2_n',
+                                      'rx3_n',],
+                             inplace=True)
+        self.df_passive.dropna(subset=["idx"], inplace=True)
     
     def _match_tx_ts(self, row):
         # TODO: Speed up this timestamp matching process
         t1 = row['tx1_n']
         t2 = row['tx2_n']
         t3 = row['tx3_n']
+        r1 = row['rx1_n']
+        r2 = row['rx2_n']
+        r3 = row['rx3_n']
         
         index = self.df[(self.df['tx1'] == t1) 
                         & (self.df['tx2'] == t2) 
-                        & (self.df['tx3'] == t3)].index 
+                        & (self.df['tx3'] == t3)
+                        & (self.df['rx1'] == r1)
+                        & (self.df['rx2'] == r2)
+                        & (self.df['rx3'] == r3)].index 
         if not len(index):
             index = [np.NaN]
         
@@ -184,26 +206,6 @@ class PostProcess(object):
     def _find_pairs(self):
         self.df['pair'] = tuple(zip(self.df.from_id, self.df.to_id))
         self.pair_list = list(self.df['pair'].unique())
-    
-    def _compute_intervals(self):
-        self.df["Ra1"] = self.df['rx2'] - self.df['tx1']
-        self.df["Db1"] = self.df['tx2'] - self.df['rx1']
-        self.df["tof1"] = self.df['rx1'] - self.df['tx1']
-        self.df["tof2"] = self.df['rx2'] - self.df['tx2']
-        self.df["S1"] = self.df['rx2'] + self.df['tx1']
-        self.df["S2"] = self.df['tx2'] + self.df['rx1']
-        
-        if self.ds_twr:
-            self.df["Ra2"] = self.df['rx3'] - self.df['rx2']
-            self.df["Db2"] = self.df['tx3'] - self.df['tx2']
-            self.df["tof3"] = self.df['rx3'] - self.df['tx3']
-            
-        if self.passive_listening:
-            self.df_passive["tof1"] = self.df_passive["tx1_n"] - self.df_passive["rx1"]
-            self.df_passive["tof2"] = self.df_passive["tx2_n"] - self.df_passive["rx2"]
-            
-            if self.ds_twr:
-                self.df_passive["tof3"] = self.df_passive["tx3_n"] - self.df_passive["rx3"]
 
     @staticmethod
     def _interpolate(x, t_old, t_new):
@@ -235,9 +237,10 @@ class PostProcess(object):
     def _unwrap_all_clocks(self):
         """
         Unwrap the clock for all the time-stamp measurements.
-        TODO: I would like to find a better way to deal with this. 
+        TODO: I would like to find a better way to deal with this. Should maybe look at 
+              each clock's timestamps at all times at once, including both its own 
+              transmission and reception times.
         """
-        # Timestamps are represented as uint32
         max_ts_ns = self.max_ts_value * self.ts_to_ns
 
         ### --- Unwrap time-stamps --- ###
@@ -253,12 +256,10 @@ class PostProcess(object):
             if df_iter['rx2'].iloc[0] < df_iter['tx1'].iloc[0]:
                 df_iter.at[0,'rx2'] += max_ts_ns
                 iter_rx2 = 1
-                iter_rx3 = 1
 
             if df_iter['tx2'].iloc[0] < df_iter['rx1'].iloc[0]:
                 df_iter.at[0,'tx2'] += max_ts_ns
                 iter_tx2 = 1
-                iter_tx3 = 1
 
             if self.ds_twr:
                 if df_iter['tx3'].iloc[0] < df_iter['tx2'].iloc[0]:
@@ -281,7 +282,37 @@ class PostProcess(object):
             
             # 
             self.df[self.df['pair']==pair] = df_iter
+            
+        if self.passive_listening:
+            self._unwrap_passive_clocks(max_ts_ns)
+            
+    def _unwrap_passive_clocks(self, max_ts_ns):
+        for tag in self.moment_arms:
+            df_iter = self.df_passive[self.df_passive['my_id']==tag].copy()
+            
+            iter_rx2 = 0
+            iter_rx3 = 0
+        
+            # Check if a clock wrap occured at the first measurement, and unwrap
+            if df_iter['rx2'].iloc[0] < df_iter['rx1'].iloc[0]:
+                df_iter.at[0,'rx2'] += max_ts_ns
+                iter_rx2 = 1
 
+            if self.ds_twr:
+                if df_iter['rx3'].iloc[0] < df_iter['rx2'].iloc[0]:
+                    df_iter.at[0,'rx3'] += max_ts_ns
+                    iter_rx3 = 1
+
+            # Individual unwraps
+            df_iter['rx1'] = self._unwrap(df_iter['rx1'], max_ts_ns)
+            df_iter['rx2'] = self._unwrap(df_iter['rx2'], max_ts_ns, iter=iter_rx2)
+
+            if self.ds_twr:
+                df_iter['rx3'] = self._unwrap(df_iter['rx3'], max_ts_ns, iter=iter_rx3)
+            
+            # 
+            self.df_passive[self.df_passive['my_id']==tag] = df_iter
+        
     @staticmethod
     def _unwrap(data, max, iter=0):
         """
@@ -311,6 +342,11 @@ class PostProcess(object):
             data[lv0] += iter*max    
 
         return data
+    
+    def save(self, filename="data.pickle"):
+        
+        with open(filename,"wb") as file:
+            pickle.dump(self, file)
     ### ------------------------------------------------------------------------ ###
 
 
