@@ -8,7 +8,7 @@ import random
 
 T = 1e-2
 K = 0.99
-n = 3 # number of tags
+n = 4 # number of tags
 m = n-1
 N = n*2 + m*2
 
@@ -33,8 +33,8 @@ for _ in range(n_twr//2):
     row += 1
 
     K = random.randrange(95, 105, 1)/100
-    C[row,2*tag_i:2*tag_i+2] = [0.5*K, 0.5*K]
-    C[row,2*tag_j:2*tag_j+2] = [0.5, 0.5]
+    C[row,2*tag_i:2*tag_i+2] = [0.5, -0.5]
+    C[row,2*tag_j:2*tag_j+2] = [-0.5*K, 0.5]
 
     row += 1
     tag_j += 1
