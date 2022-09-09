@@ -70,11 +70,11 @@ fig, axs = plt.subplots(2,1,sharex='all', sharey='all')
 bins=np.linspace(-0.5,1,100)
 axs[0].hist(meas_new['linear']-gt, bins=bins, density=True, alpha=0.5, label=r'Antenna-Delay Calibrated')
 axs[0].hist(meas_old-gt, bins=bins, density=True, alpha=0.5, label=r'Raw')
-axs[0].set_title(r'Linear Least Squares')
+axs[0].set_title(r'Normal-Loss Least Squares')
 
 axs[1].hist(meas_new['robust']-gt, bins=bins, density=True, alpha=0.5, label=r'Antenna-Delay Calibrated')
 axs[1].hist(meas_old-gt, bins=bins, density=True, alpha=0.5, label=r'Raw')
-axs[1].set_title(r'Robust Least Squares')
+axs[1].set_title(r'Cauchy-Loss Least Squares')
 axs[1].set_xlabel(r'Bias [m]')
 
 axs[0].legend()

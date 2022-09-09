@@ -6,10 +6,15 @@ import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 matplotlib.use('Qt5Agg')
+from matplotlib import rc
+rc('text', usetex=True)
 
 sns.set_theme()
 
-tag_ids={'ifo001': [1,2],
+# tag_ids={'ifo001': [1,2],
+#          'ifo002': [3,4],
+#          'ifo003': [5,6]}
+tag_ids={'ifo001': [1,7],
          'ifo002': [3,4],
          'ifo003': [5,6]}
 # moment_arms={'ifo001': [[0.15846,-0.16067,-0.07762], [-0.19711,0.14649,-0.082706]],
@@ -18,7 +23,7 @@ tag_ids={'ifo001': [1,2],
 moment_arms={'ifo001': [[0.13189,-0.17245,-0.05249], [-0.17542,0.15712,-0.05307]],
              'ifo002': [[0.16544,-0.15085,-0.03456], [-0.15467,0.16972,-0.01680]],
              'ifo003': [[0.16685,-0.18113,-0.05576], [-0.13485,0.15468,-0.05164]]}
-raw_obj = PostProcess("datasets/2022_08_03/bias_calibration_new/merged.bag",
+raw_obj = PostProcess("datasets/2022_09_01_tag7/bias_calibration0/merged.bag",
                       tag_ids,
                       moment_arms,
                       num_meas=-1)
@@ -33,8 +38,8 @@ initiator_id = 3
 target_id = 5
 pair = (initiator_id, target_id)
 
-raw_obj.visualize_raw_data(pair=(initiator_id,target_id))
-plt.show(block=True)
+# raw_obj.visualize_raw_data(pair=(initiator_id,target_id))
+# plt.show(block=True)
 
 # %%
 # TODO: Surely there is a better way to do this?? I inherit some attributes + lift function
@@ -107,7 +112,8 @@ if antenna_delay:
 
 # %% Power calibration
 if power_calib:
-    calib_obj.fit_model(std_window=50, chi_thresh=16.8, merge_pairs=True)
+    # calib_obj.fit_model(std_window=50, chi_thresh=16.8, merge_pairs=True)
+    calib_obj.fit_model(std_window=25, chi_thresh=22.8, merge_pairs=True)
 
     # bias_fit, std_fit = calib_obj.get_average_model()
 
@@ -145,98 +151,202 @@ for lv0, pair_i in enumerate(calib_obj.mean_spline):
 
 axs[0].legend()
 plt.show(block=True)
-# %% TESTING 
-raw_obj2 = PostProcess("datasets/2022_08_03/bias_calibration/merged.bag",
+# %% TESTING
+# Load datasets
+raw_obj2 = PostProcess("datasets/2022_09_01_tag7/random2/merged.bag",
                        tag_ids,
                        moment_arms,
                        num_meas=-1)
 
 calib_obj2 = UwbCalibrate(raw_obj2, rm_static=False)
 
+# %%
+# Processing
+
+## Find earliest time recorded
+t0 = np.Inf
+for pair_i in calib_obj2.ts_data:
+    t_i = calib_obj2.ts_data[pair_i][0,0]
+    if t_i < t0:
+        t0 = t_i
+
 ## Pre-calibration
 num_pairs = len(calib_obj2.ts_data)
-meas_old = {pair_i:[] for pair_i in calib_obj2.ts_data}
+meas_old = {}
+lifted_pr = {}
+gt = {}
+t = {}
 for lv0, pair_i in enumerate(calib_obj2.ts_data):
-    meas_old[pair_i] = calib_obj2.compute_range_meas(pair_i,
-                                                  visualize=False)
+    sorted_pair = tuple(np.sort(pair_i))
+    if sorted_pair not in meas_old:
+        meas_old[sorted_pair] = np.array([])
+        lifted_pr[sorted_pair] = np.array([])
+        t[sorted_pair] = np.array([])
+        gt[sorted_pair] = np.array([])
 
-# plt.show(block=True)
+    meas = calib_obj2.compute_range_meas(pair_i, visualize=False)
+    meas_old[sorted_pair] = np.hstack((meas_old[sorted_pair],meas))
 
+    lifted_pr_i = 0.5*calib_obj2.lift(calib_obj2.ts_data[pair_i][:,calib_obj2.fpp1_idx]) + \
+                  + 0.5*calib_obj2.lift(calib_obj2.ts_data[pair_i][:,calib_obj2.fpp2_idx])
+    lifted_pr[sorted_pair] = np.hstack((lifted_pr[sorted_pair],lifted_pr_i))
+
+    t_i = calib_obj2.ts_data[pair_i][:,0] - t0
+    t[sorted_pair] = np.hstack((t[sorted_pair],t_i))
+
+    gt_i = calib_obj2.time_intervals[pair_i]["r_gt"]
+    gt[sorted_pair] = np.hstack((gt[sorted_pair],gt_i))
+
+# Correct antenna delays
 if antenna_delay:
     calib_obj2.correct_antenna_delay(delays)
+    
+    meas_delay_calib = {}
+    for lv0, pair_i in enumerate(calib_obj2.ts_data):
+        sorted_pair = tuple(np.sort(pair_i))
+        if sorted_pair not in meas_delay_calib:
+            meas_delay_calib[sorted_pair] = np.array([])
+        meas = calib_obj2.compute_range_meas(pair_i, visualize=False)
+        meas_delay_calib[sorted_pair] = np.hstack((meas_delay_calib[sorted_pair],meas))
 
-meas_new = calib_obj2.compute_range_meas(pair)
-avg_fpp = 0.5*(calib_obj2.ts_data[pair][:,calib_obj2.fpp1_idx] + calib_obj2.ts_data[pair][:,calib_obj2.fpp2_idx])
-lifted_pr = 0.5*calib_obj2.lift(calib_obj2.ts_data[pair][:,calib_obj2.fpp1_idx]) + \
-            + 0.5*calib_obj2.lift(calib_obj2.ts_data[pair][:,calib_obj2.fpp2_idx])
-meas_new -= calib_obj.spl(lifted_pr)
+# Correct power-correlated bias
+meas_calib = {}
+std_calib = {}
+for lv0, pair_i in enumerate(calib_obj2.ts_data):
+    sorted_pair = tuple(np.sort(pair_i))
+    if sorted_pair not in meas_calib:
+        meas_calib[sorted_pair] = np.array([])    
+        std_calib[sorted_pair] = np.array([])    
+    meas_calib[sorted_pair] = meas_delay_calib[sorted_pair] - calib_obj.spl(lifted_pr[sorted_pair])
+    std_calib[sorted_pair] = calib_obj.std_spl(lifted_pr[sorted_pair])
+    
+# Sort
+for pair_i in t:
+    idx = np.argsort(t[pair_i])
+    t[pair_i] = t[pair_i][idx]
+    meas_old[pair_i] = meas_old[pair_i][idx]
+    lifted_pr[pair_i] = lifted_pr[pair_i][idx]
+    gt[pair_i] = gt[pair_i][idx]
+    meas_delay_calib[pair_i] = meas_delay_calib[pair_i][idx]
+    meas_calib[pair_i] = meas_calib[pair_i][idx]
+    std_calib[pair_i] = std_calib[pair_i][idx]
 
-t = calib_obj2.ts_data[pair][:,0] - calib_obj2.ts_data[pair][0,0]
-std = calib_obj.std_spl(lifted_pr)
+# %% 
+# Plotting
 
-fig, axs = plt.subplots(4,1, sharex='all')
-gt = calib_obj2.time_intervals[pair]["r_gt"]
+# PLOT 1: Range measurements and ground truth for all pairs, each as a subplot
+n = len(meas_calib)
+num_rows = 6
+num_columns = np.ceil(n/num_rows).astype(int)
+fig = plt.figure()
 
-axs[0].plot((t-t[0])/1e9, meas_new-gt, label = r'Fully Calibrated')
-axs[0].plot((t-t[0])/1e9, meas_old[pair]-gt, label = r'Raw')
-axs[0].set_ylabel(r"Range Error [m]")
-axs[0].set_xlabel(r"Time [s]")
-# axs[0].set_ylim([-0.35, 0.6])
+for i,pair_i in enumerate(t):
+    ax = plt.subplot(num_rows, num_columns, i+1) 
+    ax.plot(t[pair_i],gt[pair_i])
+    ax.scatter(t[pair_i],meas_old[pair_i],color='darkorange',s=1)
+    ax.scatter(t[pair_i],meas_calib[pair_i],color='green',s=1)
+    ax.set_ylim(0,5)
+    ax.set_title(str(pair_i))
 
-axs[0].fill_between(
-                    (t-t[0])/1e9,
-                    - 3 * std,
-                    3 * std,
-                    alpha=0.5,
-                    label=r"99.97% confidence interval",
-                    color='b',
-                )
-axs[0].legend()
+fig.legend(['Ground Truth', 'Raw', 'Calibrated'])
 
-avg_rxp = 0.5*(calib_obj2.ts_data[pair][:,calib_obj2.rxp1_idx] + calib_obj2.ts_data[pair][:,calib_obj2.rxp2_idx])
-lifted_rxp = 0.5*calib_obj2.lift(calib_obj2.ts_data[pair][:,calib_obj2.rxp1_idx]) + \
-            + 0.5*calib_obj2.lift(calib_obj2.ts_data[pair][:,calib_obj2.rxp2_idx])
+# PLOT 2: Bias and std, each as a subplot
+fig = plt.figure()
+fig.subplots_adjust(hspace = 0.5)
 
-axs[1].plot((t-t[0])/1e9, lifted_pr, label = r'Lifted FPP Power')
-axs[1].plot((t-t[0])/1e9, lifted_rxp, label = r'Lifted RXP Power')
-axs[1].set_ylabel(r"$f(P_r)$")
-axs[1].set_xlabel(r"Time [s]")
+for i,pair_i in enumerate(t):
+    ax = plt.subplot(num_rows, num_columns, i+1) 
+    # ax.plot(t[pair_i],meas_old[pair_i] - gt[pair_i])
+    bias = meas_calib[pair_i] - gt[pair_i]
+    eps = bias**2 / std_calib[pair_i]**2
+    inliers = (eps < 3.84) & (np.abs(bias)<3)
+    if i==0:
+        ax.scatter(t[pair_i][inliers],bias[inliers], s=1, label=r"Inliers")
+        ax.scatter(t[pair_i][~inliers],bias[~inliers], s=1, label=r"Outliers")
+        ax.fill_between(t[pair_i],
+            -2*std_calib[pair_i],
+            2*std_calib[pair_i],
+            color='b',
+            alpha=0.5,
+            label=r"95\% confidence interval",
+            )
+    else:
+        ax.scatter(t[pair_i][inliers],bias[inliers], s=1)
+        ax.scatter(t[pair_i][~inliers],bias[~inliers], s=1)
+        ax.fill_between(t[pair_i],
+            -2*std_calib[pair_i],
+            2*std_calib[pair_i],
+            color='b',
+            alpha=0.5,
+            )
+    ax.set_ylim(-0.5,1)
+    
+    if np.mod(i,2) == 0:
+        ax.set_ylabel(r'Bias [m]', fontsize=40)
+        ax.set_yticks([-0.5, 0, 0.5])
+    else:
+        ax.set_yticks([])
+    
+    if i >= num_rows*num_columns-2:
+        ax.set_xlabel(r'Time [s]', fontsize=40)
+    else:
+        ax.set_xticks([])
 
-axs[1].legend()
+    mean_inlier_error = np.mean(bias[inliers])
+    std_inlier_error = np.std(bias[inliers])
+    perc_inliers = np.sum(inliers)/len(eps)*100
+    pair_print = str((int(pair_i[0]),int(pair_i[1])))
+    ax.set_title(r'\textbf{Pair}: '+pair_print+r', \textbf{Inliers}: %2.2f\%%, \textbf{Mean}: %1.3f [cm], \textbf{Std.}: %1.3f [cm]' % (perc_inliers, mean_inlier_error*100, std_inlier_error*100),
+                 fontsize=35)
+    ax.tick_params(axis='both', labelsize=40)
 
-axs[2].plot((t-t[0])/1e9, lifted_rxp - lifted_pr, label = r'RXP - FPP')
-axs[2].set_ylabel(r"RXP - FPP [?]")
-axs[2].set_xlabel(r"Time [s]")
+# fig.suptitle(r"Test-Data Calibrated Measurements", fontsize=36)
+lgnd = fig.legend(fontsize=50, ncol=3, loc='upper center')
+lgnd.legendHandles[0]._sizes = [150]
+lgnd.legendHandles[1]._sizes = [150]
 
-# axs[2].legend()
+# PLOT 3: Histogram of all biases in one plot
+all_bias_old = np.array([])
+all_bias_delay = np.array([])
+all_bias_calib = np.array([])
+all_std_calib = np.array([])
+all_t = np.array([])
+for pair_i in t:
+    all_bias_old = np.hstack((all_bias_old, meas_old[pair_i]-gt[pair_i]))
+    all_bias_delay = np.hstack((all_bias_delay, meas_delay_calib[pair_i]-gt[pair_i]))
+    all_bias_calib = np.hstack((all_bias_calib, meas_calib[pair_i]-gt[pair_i]))
+    all_std_calib = np.hstack((all_std_calib, std_calib[pair_i]))
+    all_t = np.hstack((all_t, t[pair_i]))
 
-avg_std = 0.5*(calib_obj2.ts_data[pair][:,calib_obj2.std1_idx] + calib_obj2.ts_data[pair][:,calib_obj2.std2_idx])
-axs[3].plot((t-t[0])/1e9, avg_std, label = r'LDE std avg')
-axs[3].set_ylabel(r"LDE std [?]")
-axs[3].set_xlabel(r"Time [s]")
+# Remove large outliers
+idx = np.abs(all_bias_old)<3
+all_bias_old = all_bias_old[idx]
+all_bias_delay = all_bias_delay[idx]
+all_bias_calib = all_bias_calib[idx]
+all_std_calib = all_std_calib[idx]
+all_t = all_t[idx]
 
-axs[3].legend()
+# fig,axs = plt.subplots(3,1,sharex=True, sharey=True)
+# bins = np.linspace(-0.4,1,125)
+# axs[0].hist(all_bias_old, bins=bins, density=True, alpha=0.5, color='b', label='Raw')
+# axs[0].hist(all_bias_delay, bins=bins, density=True, alpha=0.5, color='r', label='Antenna-Delay Calibrated')
+# axs[1].hist(all_bias_old, bins=bins, density=True, alpha=0.5, color='b')
+# axs[1].hist(all_bias_calib, bins=bins, density=True, alpha=0.5, color='g', label='Fully Calibrated')
+# axs[2].hist(all_bias_delay, bins=bins, density=True, alpha=0.5, color='r')
+# axs[2].hist(all_bias_calib, bins=bins, density=True, alpha=0.5, color='g')
 
-print("Raw Mean: "+ str(np.mean(meas_old[pair]-gt)))
-print("Fully-Calibrated Mean: " + str(np.mean(meas_new-gt)))
-print("Raw Std: "+ str(np.std(meas_old[pair]-gt)))
-print("Fully-Calibrated Std: " + str(np.std(meas_new-gt)))
-print("---------------------------------------------------------------")
+fig,axs = plt.subplots(2,1,sharex=True, sharey=True)
+bins = np.linspace(-0.3,0.7,100)
+axs[0].hist(np.clip(all_bias_old, bins[0], bins[-1]), bins=bins, density=True, alpha=0.5, color='b', label='Raw')
+axs[0].hist(np.clip(all_bias_delay, bins[0], bins[-1]), bins=bins, density=True, alpha=0.5, color='r', label='Antenna-Delay Calibrated')
+axs[1].hist(np.clip(all_bias_delay, bins[0], bins[-1]), bins=bins, density=True, alpha=0.5, color='r')
+axs[1].hist(np.clip(all_bias_calib, bins[0], bins[-1]), bins=bins, density=True, alpha=0.5, color='g', label='Fully Calibrated')
 
-
-fig, axs = plt.subplots(1)
-axs.scatter(lifted_pr-lifted_rxp,meas_old[pair]-gt)
-axs.scatter(lifted_pr,meas_old[pair]-gt)
-axs.scatter(lifted_rxp,meas_old[pair]-gt)
-# axs.set_xlabel(r"$f(P_r)$")
-# axs.set_ylabel(r"Bias [m]")
-
-fig, axs = plt.subplots(1)
-axs.plot((t-t[0])/1e9, meas_old[pair])
-axs.plot((t-t[0])/1e9, gt)
-# axs.set_xlabel(r"$f(P_r)$")
-# axs.set_ylabel(r"Bias [m]")
-
+lgnd = fig.legend(fontsize=50, ncol=3, loc='upper center')
+# fig.suptitle(r"Calibration Results on Test Data", fontsize=36)
+axs[1].set_xlabel(r"Range Bias [m]", fontsize=50)
+axs[0].tick_params(axis='both', labelsize=50)
+axs[1].tick_params(axis='both', labelsize=50)
 
 plt.show(block=True)
 # %%
