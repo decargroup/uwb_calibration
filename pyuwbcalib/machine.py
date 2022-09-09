@@ -1,5 +1,4 @@
 from bagpy import bagreader
-from matplotlib.image import interpolations_names
 import numpy as np
 import pandas as pd
 
@@ -14,6 +13,7 @@ class Machine(object):
         self.ts_to_ns = eval(configs['PARAMS']['ts_to_ns'])
         
         self.ds_twr = eval(configs['PARAMS']['ds_twr'])
+        self.passive_listening = eval(configs['PARAMS']['passive_listening'])
         self.fpp_exists = eval(configs['PARAMS']['fpp_exists'])
         self.rxp_exists = eval(configs['PARAMS']['rxp_exists'])
         self.std_exists = eval(configs['PARAMS']['std_exists'])
@@ -33,6 +33,9 @@ class Machine(object):
         self.uwb_topic = configs['UWB_TOPIC'][str(id)]
         self.uwb_fields = [configs['UWB_MESSAGE'][key] for key in configs['UWB_MESSAGE'].keys()]
         
+        self.passive_topic = configs['PASSIVE_TOPIC'][str(id)]
+        self.passive_fields = [configs['PASSIVE_MESSAGE'][key] for key in configs['PASSIVE_MESSAGE'].keys()]
+        
     def convert_uwb_timestamps(self, ts_to_ns):
         self.df_uwb['tx1'] *= ts_to_ns
         self.df_uwb['rx1'] *= ts_to_ns
@@ -42,6 +45,19 @@ class Machine(object):
         if self.ds_twr:
             self.df_uwb['tx3'] *= ts_to_ns
             self.df_uwb['rx3'] *= ts_to_ns
+            
+        if self.passive_listening:
+            self.df_passive['rx1'] *= ts_to_ns
+            self.df_passive['rx2'] *= ts_to_ns
+            self.df_passive['tx1_n'] *= ts_to_ns
+            self.df_passive['rx1_n'] *= ts_to_ns
+            self.df_passive['tx2_n'] *= ts_to_ns
+            self.df_passive['rx2_n'] *= ts_to_ns
+            
+            if self.ds_twr:
+                self.df_passive['rx3'] *= ts_to_ns
+                self.df_passive['tx3_n'] *= ts_to_ns
+                self.df_passive['rx3_n'] *= ts_to_ns
             
     def drop_target_meas(self):
         bool1 = (self.df_uwb['from_id'] != self.tag_ids[0])
@@ -85,7 +101,7 @@ class RosMachine(Machine):
                 ):
         super().__init__(configs, id)
 
-        self.df_pose, self.df_uwb = self._read_data()
+        self.df_pose, self.df_uwb, self.df_passive = self._read_data()
         
         self.merge_pose_data()
         self.convert_uwb_timestamps(ts_to_ns)
@@ -105,11 +121,20 @@ class RosMachine(Machine):
         uwb_data = bag.message_by_topic(self.uwb_topic)
         df_uwb = pd.read_csv(uwb_data)
         
-        return df_pose, df_uwb
+        if self.passive_listening:
+            passive_data = bag.message_by_topic(self.passive_topic)
+            df_passive = pd.read_csv(passive_data)
+        else:
+            df_passive = []
+        
+        return df_pose, df_uwb, df_passive
         
     def _process_ros_timestamps(self):
         self._merge_timestamp_headers(self.df_pose)
         self._merge_timestamp_headers(self.df_uwb)
+        
+        if self.passive_listening:
+            self._merge_timestamp_headers(self.df_passive)
         
     @staticmethod
     def _merge_timestamp_headers(df):

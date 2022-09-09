@@ -1,8 +1,5 @@
 import numpy as np
-from bagpy import bagreader
 import pandas as pd
-from itertools import combinations
-import matplotlib.pyplot as plt
 from pylie import SO3
 from scipy.interpolate import interp1d
 
@@ -49,6 +46,7 @@ class PostProcess(object):
         self.ts_to_ns = machines[self.machine_ids[0]].ts_to_ns
             
         self.ds_twr = machines[self.machine_ids[0]].ds_twr
+        self.passive_listening = machines[self.machine_ids[0]].passive_listening
         self.fpp_exists = machines[self.machine_ids[0]].fpp_exists
         self.rxp_exists = machines[self.machine_ids[0]].rxp_exists
         self.std_exists = machines[self.machine_ids[0]].std_exists
@@ -66,6 +64,9 @@ class PostProcess(object):
             if machines[machine].ds_twr != self.ds_twr:
                 raise Exception(r"Not all machines are using the same ranging protocol.")
             
+            if machines[machine].passive_listening != self.passive_listening:
+                self.passive_listening = False
+            
             if machines[machine].fpp_exists != self.fpp_exists:
                 self.fpp_exists = False
             
@@ -76,13 +77,7 @@ class PostProcess(object):
                 self.std_exists = False
 
     def _process_data(self, machines):
-        self._store_uwb_data(machines)
-        
-        self._store_pose_data(machines)
-        self._store_distance_data()
-        
-        self._get_pairs()
-        
+        self._store_data(machines)
         self._unwrap_all_clocks()
         self._compute_intervals()
         
@@ -90,14 +85,50 @@ class PostProcess(object):
             self.df['pair'] = self.df['pair'].apply(sorted)
             self.pair_list = list(self.df['pair'].unique())
 
-    def _store_uwb_data(self, machines):
+    def _store_data(self, machines):
+        self._get_uwb_data(machines)
+        self._get_pose_data(machines)
+        self._get_distance_data()
+        self._find_pairs()
+
+    def _get_uwb_data(self, machines):
         all_dfs = []
+        all_dfs_passive = []
         for machine in machines:
             all_dfs = all_dfs + [machines[machine].df_uwb]
+            all_dfs_passive = all_dfs_passive + [machines[machine].df_passive]
+        
         self.df = pd.concat(all_dfs)
         self.df.reset_index(inplace=True, drop=True)
+        
+        if self.passive_listening:
+            self.df_passive = pd.concat(all_dfs_passive)
+            self.df_passive.reset_index(inplace=True, drop=True)
+            
+            self._match_uwb_data()
     
-    def _store_pose_data(self, machines):
+    def _match_uwb_data(self):
+        self.df_passive['idx'] = \
+                        self.df_passive.apply(
+                                                self._match_tx_ts, 
+                                                axis=1
+                                             )
+    
+    def _match_tx_ts(self, row):
+        # TODO: Speed up this timestamp matching process
+        t1 = row['tx1_n']
+        t2 = row['tx2_n']
+        t3 = row['tx3_n']
+        
+        index = self.df[(self.df['tx1'] == t1) 
+                        & (self.df['tx2'] == t2) 
+                        & (self.df['tx3'] == t3)].index 
+        if not len(index):
+            index = [np.NaN]
+        
+        return index[0]
+    
+    def _get_pose_data(self, machines):
         t_new = self.df["time"]
         for machine in machines:
             t = np.array(machines[machine].df_pose['time'].to_list())
@@ -107,14 +138,14 @@ class PostProcess(object):
             self.df['r_iw_a_'+machine] = list(self._interpolate(r_iw_a, t, t_new))
             self.df['q_ai_'+machine] = list(self._interpolate(q_ai, t, t_new))
             
-    def _store_distance_data(self):
+    def _get_distance_data(self):
         self.df['gt_range'] = self.df.apply(
                                             self._compute_distance, 
                                             args=(self.tag_ids, self.moment_arms), 
                                             axis=1
                                            )
         self.df['bias'] = self.df.apply(
-                                        self._get_bias, 
+                                        self._compute_bias, 
                                         axis=1
                                        )
         
@@ -147,10 +178,10 @@ class PostProcess(object):
                              )
         
     @staticmethod 
-    def _get_bias(df):
+    def _compute_bias(df):
         return df['range'] - df['gt_range']
 
-    def _get_pairs(self):
+    def _find_pairs(self):
         self.df['pair'] = tuple(zip(self.df.from_id, self.df.to_id))
         self.pair_list = list(self.df['pair'].unique())
     
@@ -166,6 +197,13 @@ class PostProcess(object):
             self.df["Ra2"] = self.df['rx3'] - self.df['rx2']
             self.df["Db2"] = self.df['tx3'] - self.df['tx2']
             self.df["tof3"] = self.df['rx3'] - self.df['tx3']
+            
+        if self.passive_listening:
+            self.df_passive["tof1"] = self.df_passive["tx1_n"] - self.df_passive["rx1"]
+            self.df_passive["tof2"] = self.df_passive["tx2_n"] - self.df_passive["rx2"]
+            
+            if self.ds_twr:
+                self.df_passive["tof3"] = self.df_passive["tx3_n"] - self.df_passive["rx3"]
 
     @staticmethod
     def _interpolate(x, t_old, t_new):
@@ -197,6 +235,7 @@ class PostProcess(object):
     def _unwrap_all_clocks(self):
         """
         Unwrap the clock for all the time-stamp measurements.
+        TODO: I would like to find a better way to deal with this. 
         """
         # Timestamps are represented as uint32
         max_ts_ns = self.max_ts_value * self.ts_to_ns
@@ -232,16 +271,12 @@ class PostProcess(object):
 
             # Individual unwraps
             df_iter['tx1'] = self._unwrap(df_iter['tx1'], max_ts_ns)
-
             df_iter['rx1'] = self._unwrap(df_iter['rx1'], max_ts_ns)
-
             df_iter['tx2'] = self._unwrap(df_iter['tx2'], max_ts_ns, iter=iter_tx2)
-
             df_iter['rx2'] = self._unwrap(df_iter['rx2'], max_ts_ns, iter=iter_rx2)
 
             if self.ds_twr:
                 df_iter['tx3'] = self._unwrap(df_iter['tx3'], max_ts_ns, iter=iter_tx3)
-
                 df_iter['rx3'] = self._unwrap(df_iter['rx3'], max_ts_ns, iter=iter_rx3)
             
             # 
