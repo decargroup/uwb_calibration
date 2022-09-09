@@ -1,6 +1,6 @@
-# TODO: 1) Should have a super class for these two classes since they'll share things
-#          like __init__, timestamp computation, etc
 from bagpy import bagreader
+from matplotlib.image import interpolations_names
+import numpy as np
 import pandas as pd
 
 class Machine(object):
@@ -10,6 +10,9 @@ class Machine(object):
                     id,
                 ):
         
+        self.max_ts_value = eval(configs['PARAMS']['max_ts_value'])
+        self.ts_to_ns = eval(configs['PARAMS']['ts_to_ns'])
+        
         pose_dir = configs['POSE_PATH']['directory']
         self.pose_path = pose_dir + configs['POSE_PATH'][str(id)]
 
@@ -18,7 +21,7 @@ class Machine(object):
         
         self.machine_id = configs['MACHINES'][str(id)]
         self.tag_ids = eval(configs['TAGS'][str(id)])
-        self.moment_arms = [configs['MOMENT_ARMS'][str(tag)] for tag in self.tag_ids]
+        self.moment_arms = {tag:eval(configs['MOMENT_ARMS'][str(tag)]) for tag in self.tag_ids}
 
         self.pose_topic = configs['POSE_TOPIC'][str(id)]
 
@@ -30,7 +33,7 @@ class Machine(object):
         self.rxp_exists = 'rxp1' in self.uwb_fields
         self.std_exists = 'std1' in self.uwb_fields
         
-    def _convert_uwb_timestamps(self, ts_to_ns):
+    def convert_uwb_timestamps(self, ts_to_ns):
         self.df_uwb['tx1'] *= ts_to_ns
         self.df_uwb['rx1'] *= ts_to_ns
         self.df_uwb['tx2'] *= ts_to_ns
@@ -40,11 +43,37 @@ class Machine(object):
             self.df_uwb['tx3'] *= ts_to_ns
             self.df_uwb['rx3'] *= ts_to_ns
             
-    def _drop_target_meas(self):
+    def drop_target_meas(self):
         bool1 = (self.df_uwb['from_id'] != self.tag_ids[0])
         bool2 = (self.df_uwb['from_id'] != self.tag_ids[1])
         
         self.df_uwb.drop(self.df_uwb[bool1 & bool2].index, inplace=True)
+        self.df_uwb.reset_index(inplace=True, drop=True)
+        
+    def merge_pose_data(self):
+        self.df_pose['r_iw_a'] = list(np.array((
+                                                self.df_pose['pose.position.x'],
+                                                self.df_pose['pose.position.y'],
+                                                self.df_pose['pose.position.z'],
+                                              )).T)
+        self.df_pose['q_ai'] = list(np.array((
+                                                self.df_pose['pose.orientation.x'],
+                                                self.df_pose['pose.orientation.y'],
+                                                self.df_pose['pose.orientation.z'],
+                                                self.df_pose['pose.orientation.w'],
+                                            )).T)
+        
+        self.df_pose.drop(columns=[
+                                    'pose.position.x',
+                                    'pose.position.y',
+                                    'pose.position.z',
+                                    'pose.orientation.x',
+                                    'pose.orientation.y',
+                                    'pose.orientation.z',
+                                    'pose.orientation.w',
+                                  ],
+                          inplace=True,
+                         )
         
 class RosMachine(Machine):
     def __init__(
@@ -58,11 +87,12 @@ class RosMachine(Machine):
 
         self.df_pose, self.df_uwb = self._read_data()
         
-        self._convert_uwb_timestamps(ts_to_ns)
+        self.merge_pose_data()
+        self.convert_uwb_timestamps(ts_to_ns)
         self._process_ros_timestamps()
         
         if not meas_at_target:
-            self._drop_target_meas()
+            self.drop_target_meas()
             
     def _read_data(self):
         # Pose data 
@@ -102,11 +132,11 @@ class CsvMachine(Machine):
 
         self.df_pose, self.df_uwb = self._read_data()
         
-        self._convert_uwb_timestamps(ts_to_ns)
+        self.convert_uwb_timestamps(ts_to_ns)
         # self._process_ros_timestamps()
         
         if not meas_at_target:
-            self._drop_target_meas()
+            self.drop_target_meas()
         
     def _read_data(self):
         # TODO: implement reading data from csv files. 
