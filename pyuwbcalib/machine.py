@@ -13,6 +13,11 @@ class Machine(object):
         self.max_ts_value = eval(configs['PARAMS']['max_ts_value'])
         self.ts_to_ns = eval(configs['PARAMS']['ts_to_ns'])
         
+        self.ds_twr = eval(configs['PARAMS']['ds_twr'])
+        self.fpp_exists = eval(configs['PARAMS']['fpp_exists'])
+        self.rxp_exists = eval(configs['PARAMS']['rxp_exists'])
+        self.std_exists = eval(configs['PARAMS']['std_exists'])
+        
         pose_dir = configs['POSE_PATH']['directory']
         self.pose_path = pose_dir + configs['POSE_PATH'][str(id)]
 
@@ -27,11 +32,6 @@ class Machine(object):
 
         self.uwb_topic = configs['UWB_TOPIC'][str(id)]
         self.uwb_fields = [configs['UWB_MESSAGE'][key] for key in configs['UWB_MESSAGE'].keys()]
-
-        self.ds_twr = 'tx3' in self.uwb_fields
-        self.fpp_exists = 'fpp1' in self.uwb_fields
-        self.rxp_exists = 'rxp1' in self.uwb_fields
-        self.std_exists = 'std1' in self.uwb_fields
         
     def convert_uwb_timestamps(self, ts_to_ns):
         self.df_uwb['tx1'] *= ts_to_ns
