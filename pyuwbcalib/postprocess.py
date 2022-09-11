@@ -26,19 +26,28 @@ class PostProcess(object):
     num_meas: float
         Number of measurements to process. -1 means no cap. Default: -1.
 
-    TODO 1: Check for missing rigid bodies when checking bag files.
+    TODO 1: Need to make this robust to the user dropping rows and reindexing df, because otherwise
+            the indices in df_passive get all mixed up. 
          2: Add tests.
-         3: Should I do all this in Pandas?
+         3: Parallelize some things?
     """
     
     def __init__(
                     self, 
                     machines,
+                    compute_intervals = False,
                     merge_pairs = False,
                 ):
-        self.merge_pairs = merge_pairs
         self._save_params(machines)    
-        self._process_data(machines)
+        self._store_data(machines)
+        
+        if compute_intervals:
+            self._compute_intervals()
+        
+        if merge_pairs:
+            self.df['pair'] = self.df['pair'].apply(sorted)
+            self.pair_list = list(self.df['pair'].unique())
+
 
     def _save_params(self, machines):
         self.machine_ids = []
@@ -82,14 +91,6 @@ class PostProcess(object):
             
             if machines[machine].std_exists != self.std_exists:
                 self.std_exists = False
-
-    def _process_data(self, machines):
-        self._store_data(machines)
-        self._unwrap_all_clocks()
-        
-        if self.merge_pairs:
-            self.df['pair'] = self.df['pair'].apply(sorted)
-            self.pair_list = list(self.df['pair'].unique())
 
     def _store_data(self, machines):
         self._get_uwb_data(machines)
@@ -162,8 +163,7 @@ class PostProcess(object):
             
     def _get_distance_data(self):
         self.df['gt_range'] = self.df.apply(
-                                            self._compute_distance, 
-                                            args=(self.tag_ids, self.moment_arms), 
+                                            self.compute_distance, 
                                             axis=1
                                            )
         self.df['bias'] = self.df.apply(
@@ -172,24 +172,23 @@ class PostProcess(object):
                                        )
         
         
-    @staticmethod
-    def _compute_distance(row, tag_ids, moment_arms):
-        id0 = row['from_id']
-        id1 = row['to_id']
+    def compute_distance(self, row, id=[]):
+        if not id:
+            id = [row['from_id'], row['to_id']]
         
-        machine0 = [machine for machine in tag_ids \
-                            if id0 in tag_ids[machine]][0]
-        machine1 = [machine for machine in tag_ids \
-                            if id1 in tag_ids[machine]][0]
+        machine0 = [machine for machine in self.tag_ids \
+                            if id[0] in self.tag_ids[machine]][0]
+        machine1 = [machine for machine in self.tag_ids \
+                            if id[1] in self.tag_ids[machine]][0]
         
         r_0w_a = row['r_iw_a_'+machine0]
         q_a0 = row['q_ai_'+machine0]
-        r_t0_0 = moment_arms[id0]
+        r_t0_0 = self.moment_arms[id[0]]
         C_a0 = SO3.from_quat(q_a0, order='xyzw')
         
         r_1w_a = row['r_iw_a_'+machine1]
         q_a1 = row['q_ai_'+machine1]
-        r_t1_1 = moment_arms[id1]
+        r_t1_1 = self.moment_arms[id[1]]
         C_a1 = SO3.from_quat(q_a1, order='xyzw')
         
         return np.linalg.norm(
@@ -198,7 +197,7 @@ class PostProcess(object):
                                 - r_1w_a
                                 - C_a1 @ r_t1_1
                              )
-        
+                
     @staticmethod 
     def _compute_bias(df):
         return df['range'] - df['gt_range']
@@ -234,114 +233,88 @@ class PostProcess(object):
 
 
     ### -------------------------- UNWRAPPING METHODS -------------------------- ###
-    def _unwrap_all_clocks(self):
-        """
-        Unwrap the clock for all the time-stamp measurements.
-        TODO: I would like to find a better way to deal with this. Should maybe look at 
-              each clock's timestamps at all times at once, including both its own 
-              transmission and reception times.
-        """
+    def _compute_intervals(self):
+        # TODO: make it applicable to SS
+        # TODO: tidy it up a bit?
+        # TODO: deal with the warning error. Could use the hacky
+        #           pd.options.mode.chained_assignment = None  
+        # TODO: What to do with the custom K thing that I have?
         max_ts_ns = self.max_ts_value * self.ts_to_ns
-
-        ### --- Unwrap time-stamps --- ###
-        for pair in self.pair_list: 
-            df_iter = self.df[self.df['pair']==pair].copy()
-            
-            iter_rx2 = 0
-            iter_tx2 = 0
-            iter_tx3 = 0
-            iter_rx3 = 0
-            
-            # Check if a clock wrap occured at the first measurement, and unwrap
-            if df_iter['rx2'].iloc[0] < df_iter['tx1'].iloc[0]:
-                df_iter.at[0,'rx2'] += max_ts_ns
-                iter_rx2 = 1
-
-            if df_iter['tx2'].iloc[0] < df_iter['rx1'].iloc[0]:
-                df_iter.at[0,'tx2'] += max_ts_ns
-                iter_tx2 = 1
-
-            if self.ds_twr:
-                if df_iter['tx3'].iloc[0] < df_iter['tx2'].iloc[0]:
-                    df_iter.at[0,'tx3'] += max_ts_ns
-                    iter_tx3 = 1
-
-                if df_iter['rx3'].iloc[0] < df_iter['rx2'].iloc[0]:
-                    df_iter.at[0,'rx3'] += max_ts_ns
-                    iter_rx3 = 1
-
-            # Individual unwraps
-            df_iter['tx1'] = self._unwrap(df_iter['tx1'], max_ts_ns)
-            df_iter['rx1'] = self._unwrap(df_iter['rx1'], max_ts_ns)
-            df_iter['tx2'] = self._unwrap(df_iter['tx2'], max_ts_ns, iter=iter_tx2)
-            df_iter['rx2'] = self._unwrap(df_iter['rx2'], max_ts_ns, iter=iter_rx2)
-
-            if self.ds_twr:
-                df_iter['tx3'] = self._unwrap(df_iter['tx3'], max_ts_ns, iter=iter_tx3)
-                df_iter['rx3'] = self._unwrap(df_iter['rx3'], max_ts_ns, iter=iter_rx3)
-            
-            # 
-            self.df[self.df['pair']==pair] = df_iter
-            
-        if self.passive_listening:
-            self._unwrap_passive_clocks(max_ts_ns)
-            
-    def _unwrap_passive_clocks(self, max_ts_ns):
-        for tag in self.moment_arms:
-            df_iter = self.df_passive[self.df_passive['my_id']==tag].copy()
-            
-            iter_rx2 = 0
-            iter_rx3 = 0
         
-            # Check if a clock wrap occured at the first measurement, and unwrap
-            if df_iter['rx2'].iloc[0] < df_iter['rx1'].iloc[0]:
-                df_iter.at[0,'rx2'] += max_ts_ns
-                iter_rx2 = 1
-
-            if self.ds_twr:
-                if df_iter['rx3'].iloc[0] < df_iter['rx2'].iloc[0]:
-                    df_iter.at[0,'rx3'] += max_ts_ns
-                    iter_rx3 = 1
-
-            # Individual unwraps
-            df_iter['rx1'] = self._unwrap(df_iter['rx1'], max_ts_ns)
-            df_iter['rx2'] = self._unwrap(df_iter['rx2'], max_ts_ns, iter=iter_rx2)
-
-            if self.ds_twr:
-                df_iter['rx3'] = self._unwrap(df_iter['rx3'], max_ts_ns, iter=iter_rx3)
+        self.df['del_41'] = np.zeros((len(self.df)))
+        self.df['del_32'] = np.zeros((len(self.df)))
+        self.df['del_21'] = np.zeros((len(self.df)))
+        self.df['del_43'] = np.zeros((len(self.df)))
+        self.df['del_64'] = np.zeros((len(self.df)))
+        self.df['del_53'] = np.zeros((len(self.df)))
+        self.df_passive['del_71'] = np.zeros((len(self.df_passive)))
+        self.df_passive['del_83'] = np.zeros((len(self.df_passive)))
+        self.df_passive['del_95'] = np.zeros((len(self.df_passive)))
+        
+        for tag_i in self.moment_arms:
+            for tag_j in self.moment_arms:
+                cond0 = self.df['pair']==(tag_i, tag_j)
+                df_iter = self.df[cond0].copy()
+                if df_iter.empty:
+                    continue
+                t1 = df_iter['tx1']
+                t2 = df_iter['rx1']
+                t3 = df_iter['tx2']
+                t4 = df_iter['rx2']
+                t5 = df_iter['tx3']
+                t6 = df_iter['rx3']
+                
+                df_iter['del_64'] = self._unwrap_intervals(np.array(t6 - t4), 
+                                                           max_ts_ns)
+                df_iter['del_53'] = self._unwrap_intervals(np.array(t5 - t3), 
+                                                           max_ts_ns)
+                df_iter['del_41'] = self._unwrap_intervals(np.array(t4 - t1), 
+                                                           max_ts_ns)
+                df_iter['del_32'] = self._unwrap_intervals(np.array(t3 - t2), 
+                                                           max_ts_ns)
+                df_iter['del_21'] = self._unwrap_intervals(np.array(t2 - t1), 
+                                                           max_ts_ns)
+                df_iter['del_43'] = self._unwrap_intervals(np.array(t4 - t3), 
+                                                           max_ts_ns)
+                
+                self.df[cond0] = df_iter
+                
+                for tag_p in self.moment_arms:
+                    cond1 = (self.df_passive['from_id'] == tag_i)
+                    cond2 = (self.df_passive['to_id'] == tag_j)
+                    cond3 = (self.df_passive['my_id'] == tag_p)
+                    df_passive_iter = self.df_passive[cond1 & cond2 & cond3]
+                    if df_passive_iter.empty:
+                        continue
+                    
+                    t7 = df_passive_iter['rx1']
+                    t8 = df_passive_iter['rx2']
+                    t9 = df_passive_iter['rx3']
+                    
+                    del_71 = t7 - self._match_indices(t1, np.array(df_passive_iter['idx']))
+                    df_passive_iter['del_71'] = self._unwrap_intervals(np.array(del_71), max_ts_ns)
+                    del_83 = t8 - self._match_indices(t3, np.array(df_passive_iter['idx']))
+                    df_passive_iter['del_83'] = self._unwrap_intervals(np.array(del_83), max_ts_ns)
+                    del_95 = t9 - self._match_indices(t5, np.array(df_passive_iter['idx']))
+                    df_passive_iter['del_95'] = self._unwrap_intervals(np.array(del_95), max_ts_ns)
+                                        
+                    self.df_passive[cond1 & cond2 & cond3] = df_passive_iter
+    
+    @staticmethod
+    def _unwrap_intervals(x, max_val):
+        avg = np.mean(x)
+        sum_lower = np.sum(x < avg)
+        sum_higher = np.sum(x > avg)
+        if sum_lower > sum_higher:
+            x[x > avg] -= max_val
+        else:
+            x[x < avg] += max_val
             
-            # 
-            self.df_passive[self.df_passive['my_id']==tag] = df_iter
+        return x
         
     @staticmethod
-    def _unwrap(data, max, iter=0):
-        """
-        Unwraps data. 
-
-        PARAMETERS:
-        -----------
-        data: np.array(n,)
-            Data to be unwrapped.
-        max: float
-            Max value of the data where the wrapping occurs.
-
-        RETURNS:
-        --------
-        data: np.array(n,)
-            Unwrapped data.
-        """
-        data = np.array(data)
-        
-        temp = data[1:] - data[:-1]
-        idx = np.concatenate([np.array([0]), temp < 0])
-
-        # iter = 0
-        for lv0, _ in enumerate(data):
-            if idx[lv0]:
-                iter += 1
-            data[lv0] += iter*max    
-
-        return data
+    def _match_indices(x0, idx):
+        return np.array(x0.loc[idx])
     
     def save(self, filename="data.pickle"):
         
