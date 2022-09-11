@@ -17,6 +17,6 @@ for i,machine in enumerate(parser['MACHINES']):
                                       i,
                                       ts_to_ns = ts_to_ns)
 # %%
-data = PostProcess(machines)
+data = PostProcess(machines, compute_intervals=True)
 data.save()
 # %%
