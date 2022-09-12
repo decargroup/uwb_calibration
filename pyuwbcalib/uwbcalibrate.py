@@ -563,7 +563,7 @@ class UwbCalibrate(object):
             self._all_spline_data['std'] = np.append(self._all_spline_data['std'], bias_std)
 
             ### PLOT 1 ###
-            axs[np.mod(lv0,4),int(np.floor(lv0/4))].scatter(lifted_pr_trunc, bias_trunc, label=r"Raw data", linestyle="dotted", s=1)
+            axs[np.mod(lv0,4),int(np.floor(lv0/4))].scatter(lifted_pr_trunc_STDFIT, bias_trunc_STDFIT, label=r"Raw data", linestyle="dotted", s=1)
             axs[np.mod(lv0,4),int(np.floor(lv0/4))].plot(lifted_pr, bias_fit, label=r"Fit")
             axs[np.mod(lv0,4),int(np.floor(lv0/4))].fill_between(
                 lifted_pr.ravel(),
@@ -605,7 +605,7 @@ class UwbCalibrate(object):
 
         row = np.mod(lv0+1,4)
         col = int(np.floor((lv0+1)/4))
-        _, std_spl, _, _ \
+        _, std_spl, bias_trunc_STDFIT, lifted_pr_trunc_STDFIT \
                         = self._reject_outliers(self._all_spline_data['bias_STDFIT'], 
                                                 self._all_spline_data['lifted_pr_trunc_STDFIT'], 
                                                 std_window, 
@@ -623,8 +623,8 @@ class UwbCalibrate(object):
         bias_std = std_spl( self._all_spline_data['lifted_pr'])
         bias_fit = spl( self._all_spline_data['lifted_pr'])
 
-        axs[np.mod(lv0+1,4),int(np.floor((lv0+1)/4))].scatter(lifted_pr_trunc,
-                                                            bias_trunc, 
+        axs[np.mod(lv0+1,4),int(np.floor((lv0+1)/4))].scatter(lifted_pr_trunc_STDFIT,
+                                                            bias_trunc_STDFIT, 
                                                             label=r"Raw data", 
                                                             linestyle="dotted", 
                                                             s=1)

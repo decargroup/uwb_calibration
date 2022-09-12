@@ -351,3 +351,67 @@ axs[1].tick_params(axis='both', labelsize=50)
 
 plt.show(block=True)
 # %%
+# Extra plot for paper
+# PLOT 2: Bias and std, each as a subplot
+fig,axs = plt.subplots(2, 1, sharex='all', sharey='all')
+
+pair_i = (1,5)
+bias = meas_calib[pair_i] - gt[pair_i]
+eps = bias**2 / std_calib[pair_i]**2
+inliers = (eps < 3.84) & (np.abs(bias)<3)
+axs[0].scatter(t[pair_i][inliers],bias[inliers], s=40, label=r"Inliers")
+axs[0].scatter(t[pair_i][~inliers],bias[~inliers], s=40, label=r"Outliers")
+axs[0].fill_between(t[pair_i][inliers],
+    -2*std_calib[pair_i][inliers],
+    2*std_calib[pair_i][inliers],
+    color='b',
+    alpha=0.5,
+    label=r"95\% confidence interval",
+    )
+axs[0].set_ylim(-0.5,1)
+
+axs[0].set_ylabel(r'Bias [m]', fontsize=70)
+axs[0].set_yticks([-0.5, -0.25, 0, 0.25, 0.5, 0.75, 1.00])
+# axs[0].set_xlabel(r'Time [s]', fontsize=70)
+
+mean_inlier_error = np.mean(bias[inliers])
+std_inlier_error = np.std(bias[inliers])
+perc_inliers = np.sum(inliers)/len(eps)*100
+pair_print = str((int(pair_i[0]),int(pair_i[1])))
+axs[0].set_title(r'\textbf{Inliers}: %2.2f\%%, \textbf{Mean}: %1.3f [cm], \textbf{Std.}: %1.3f [cm]' % (perc_inliers, mean_inlier_error*100, std_inlier_error*100),
+                fontsize=70)
+axs[0].tick_params(axis='both', labelsize=70)
+
+pair_i = (4,7)
+bias = meas_calib[pair_i] - gt[pair_i]
+eps = bias**2 / std_calib[pair_i]**2
+inliers = (eps < 3.84) & (np.abs(bias)<3)
+axs[1].scatter(t[pair_i][inliers],bias[inliers], s=40)
+axs[1].scatter(t[pair_i][~inliers],bias[~inliers], s=40)
+axs[1].fill_between(t[pair_i][inliers],
+    -2*std_calib[pair_i][inliers],
+    2*std_calib[pair_i][inliers],
+    color='b',
+    alpha=0.5,
+    )
+axs[1].set_ylim(-0.5,1)
+
+axs[1].set_ylabel(r'Bias [m]', fontsize=70)
+axs[1].set_yticks([-0.5, -0.25, 0, 0.25, 0.5, 0.75, 1.00])
+axs[1].set_xlabel(r'Time [s]', fontsize=70)
+
+mean_inlier_error = np.mean(bias[inliers])
+std_inlier_error = np.std(bias[inliers])
+perc_inliers = np.sum(inliers)/len(eps)*100
+pair_print = str((int(pair_i[0]),int(pair_i[1])))
+axs[1].set_title(r'\textbf{Inliers}: %2.2f\%%, \textbf{Mean}: %1.3f [cm], \textbf{Std.}: %1.3f [cm]' % (perc_inliers, mean_inlier_error*100, std_inlier_error*100),
+                fontsize=70)
+axs[1].tick_params(axis='both', labelsize=70)
+
+# fig.suptitle(r"Test-Data Calibrated Measurements", fontsize=36)
+lgnd = axs[0].legend(fontsize=60, ncol=3, loc="upper right")
+lgnd.legendHandles[0]._sizes = [150]
+lgnd.legendHandles[1]._sizes = [150]
+
+plt.show(block=True)
+# %%
