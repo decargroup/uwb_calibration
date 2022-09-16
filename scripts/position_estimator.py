@@ -8,9 +8,21 @@ from scipy.spatial.transform import Rotation
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
-matplotlib.use('Qt5Agg')
+# matplotlib.use('Qt5Agg')
 
-sns.set_theme()
+sns.set_style('whitegrid')
+sns.set_palette("colorblind")
+
+plt.rc('figure', figsize=(16, 9))
+plt.rc('lines', linewidth=2)
+plt.rc('axes', grid=True)
+plt.rc('grid', linestyle='--')
+plt.rc('text', usetex=True)
+plt.rc('font', family='serif', size=35)
+plt.rc('text.latex', preamble=r'\usepackage{amsmath}')
+plt.rc('legend', facecolor=[1,1,1])
+plt.rc('legend', fontsize=30)
+plt.rcParams['figure.constrained_layout.use'] = True
 
 # %%
 class PositionEstimator(object):
@@ -179,7 +191,7 @@ for pair in raw_obj.ts_data:
         main_tag = np.concatenate((main_tag, np.ones(np.size(t_new))*main_tag_id))
 
 idx_sorted = np.argsort(t_uwb)
-t = t_uwb[idx_sorted]/1e9
+t = t_uwb[idx_sorted]
 uwb = {'range': range[idx_sorted],
        'neighbour': neighbour[idx_sorted], 
        'main_tag': main_tag[idx_sorted],
@@ -224,7 +236,7 @@ q_machine = {} # quaternion-parametrized attitude of drones
 
 # Iterate through machines
 for machine in tag_ids:
-    t_iter = raw_obj.t_r[machine]/1e9
+    t_iter = raw_obj.t_r[machine]
     
     # Machines -------------------
     r_iter = raw_obj.r[machine]
@@ -423,7 +435,7 @@ axs[2].fill_between(t,
 #             )
 
 axs[2].set_ylim(-3,3)
-axs[2].set_xlabel(r'$t$ [s]')
+axs[2].set_xlabel(r'Time [s]')
 axs[2].set_ylabel(r'$e_z$ [m]')
 
 axs[0].legend(fontsize=20,loc='upper right')
@@ -434,10 +446,9 @@ axs.plot(t,np.linalg.norm(r_hist - gt_pos, axis=0), label="Raw")
 axs.plot(t,np.linalg.norm(r_hist_calib - gt_pos, axis=0), label="Calibrated")
 axs.plot(t,np.linalg.norm(r_hist_calib_wVariance - gt_pos, axis=0), label="Calibrated w/ Variance")
 axs.set_ylim(0,3.5)
-axs.legend(fontsize=50,loc='upper right')
-axs.set_xlabel(r'$t$ [s]', fontsize=50)
-axs.set_ylabel(r'RMSE [m]', fontsize=50)
-axs.tick_params(axis='both', labelsize=50)
+axs.legend(loc='upper right')
+axs.set_xlabel(r'Time [s]')
+axs.set_ylabel(r'RMSE [m]')
 # axs.plot(np.linalg.norm(r_hist_calib - gt_pos, axis=0) - \
         #  np.linalg.norm(r_hist - gt_pos, axis=0), 'blue')
 

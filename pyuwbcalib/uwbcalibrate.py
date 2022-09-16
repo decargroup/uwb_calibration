@@ -505,6 +505,7 @@ class UwbCalibrate(object):
                                  'bias_STDFIT': np.empty(0),
                                  'std': np.empty(0)}
 
+        colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
         for lv0, pair in enumerate(addressed_pairs):
             range = self.compute_range_meas(pair)
             bias = range - self.time_intervals[pair]["r_gt"]
@@ -563,7 +564,7 @@ class UwbCalibrate(object):
             self._all_spline_data['std'] = np.append(self._all_spline_data['std'], bias_std)
 
             ### PLOT 1 ###
-            axs[np.mod(lv0,4),int(np.floor(lv0/4))].scatter(lifted_pr_trunc, bias_trunc, label=r"Raw data", linestyle="dotted", s=1)
+            axs[np.mod(lv0,4),int(np.floor(lv0/4))].scatter(lifted_pr_trunc_STDFIT, bias_trunc_STDFIT, label=r"Raw data", linestyle="dotted", s=1)
             axs[np.mod(lv0,4),int(np.floor(lv0/4))].plot(lifted_pr, bias_fit, label=r"Fit")
             axs[np.mod(lv0,4),int(np.floor(lv0/4))].fill_between(
                 lifted_pr.ravel(),
@@ -581,12 +582,25 @@ class UwbCalibrate(object):
 
             ### PLOT 2 ### Plot with all splines
             if lv0 == 0:
-                axs2[0].plot(lifted_pr, bias_fit*100, label="Individual Pairs", linewidth=0.4, color='grey')
+                axs2[0].plot(lifted_pr, 
+                             bias_fit*100, 
+                             label="Individual Pairs", 
+                             linewidth=1, 
+                             color='gray',
+                             alpha=0.5,)
             else:
-                axs2[0].plot(lifted_pr, bias_fit*100, linewidth=0.4, color='grey')
+                axs2[0].plot(lifted_pr, 
+                             bias_fit*100, 
+                             linewidth=1, 
+                             color='gray',
+                             alpha=0.5,)
             # fig2.suptitle(r"Bias-Power Fit")
 
-            axs2[1].plot(lifted_pr, bias_std*100, linewidth=0.4, color='grey')
+            axs2[1].plot(lifted_pr, 
+                         bias_std*100, 
+                         linewidth=1, 
+                         color='gray',
+                         alpha=0.5,)
 
         axs[0,-1].legend()
 
@@ -605,7 +619,7 @@ class UwbCalibrate(object):
 
         row = np.mod(lv0+1,4)
         col = int(np.floor((lv0+1)/4))
-        _, std_spl, _, _ \
+        _, std_spl, bias_trunc_STDFIT, lifted_pr_trunc_STDFIT \
                         = self._reject_outliers(self._all_spline_data['bias_STDFIT'], 
                                                 self._all_spline_data['lifted_pr_trunc_STDFIT'], 
                                                 std_window, 
@@ -623,8 +637,8 @@ class UwbCalibrate(object):
         bias_std = std_spl( self._all_spline_data['lifted_pr'])
         bias_fit = spl( self._all_spline_data['lifted_pr'])
 
-        axs[np.mod(lv0+1,4),int(np.floor((lv0+1)/4))].scatter(lifted_pr_trunc,
-                                                            bias_trunc, 
+        axs[np.mod(lv0+1,4),int(np.floor((lv0+1)/4))].scatter(lifted_pr_trunc_STDFIT,
+                                                            bias_trunc_STDFIT, 
                                                             label=r"Raw data", 
                                                             linestyle="dotted", 
                                                             s=1)
@@ -638,27 +652,26 @@ class UwbCalibrate(object):
         )
         axs[np.mod(lv0+1,4),int(np.floor((lv0+1)/4))].set_xlabel(r"$f(P_r)$")
 
-        axs2[0].plot(self._all_spline_data['lifted_pr'], bias_fit*100, label=r"Average", linewidth=5, color='r')
+        axs2[0].plot(self._all_spline_data['lifted_pr'], bias_fit*100, label=r"Average", linewidth=8, color=colors[0])
         # axs2[0].legend(loc='upper right')
         # axs2[0].set_xlabel(r"$f(P_r)$")
-        axs2[0].set_ylabel(r"Bias [cm]", fontsize=65)
+        axs2[0].set_ylabel(r"Bias [cm]")
         # fig2.suptitle(r"Bias-Power Fit")
-        fig2.legend(fontsize=65, ncol=2, loc='upper center')
+        lgnd = fig2.legend(ncol=2, loc='upper center', facecolor=[1,1,1])
+        lgnd.legendHandles[0]._alpha = 0.9
 
-        axs2[1].plot(self._all_spline_data['lifted_pr'], bias_std*100, linewidth=5, color='r')
-        axs2[1].set_xlabel(r"$\Psi\left( 0.5 (p_4^\mathrm{f} + p_2^\mathrm{f}) \right)$", fontsize=75)
-        axs2[1].set_ylabel(r"Bias Std [cm]", fontsize=65)
+        axs2[1].plot(self._all_spline_data['lifted_pr'], bias_std*100, linewidth=8, color=colors[0])
+        axs2[1].set_xlabel(r"$\Psi\left( 0.5 (p_4^\mathrm{f} + p_2^\mathrm{f}) \right)$")
+        axs2[1].set_ylabel(r"Bias Std [cm]")
         
         axs2[0].set_yticks([-10, -5, 0, 5, 10])
-        axs2[1].set_yticks([0, 5, 10, 15, 20, 25])
-        axs2[0].tick_params(axis='both', labelsize=65)
-        axs2[1].tick_params(axis='both', labelsize=65)
+        axs2[1].set_yticks([0, 10, 20])
 
         self.spl = spl
         self.std_spl = std_spl
         
-        fig2.set_size_inches(44, 19)
-        fig2.savefig("figs/bias_power_calib.pdf", dpi=1200)
+        fig2.subplots_adjust(bottom=0.15, hspace=0.3)
+        fig2.savefig("figs/bias_power_fit.pdf", dpi=300)
 
     def calibrate_antennas(self, loss='cauchy'):
         """

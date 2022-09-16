@@ -4,10 +4,23 @@ from pyuwbcalib.postprocess import PostProcess
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
+# from cycler import cycler
 import seaborn as sns
-matplotlib.use('Qt5Agg')
+# matplotlib.use('Qt5Agg')
 
-sns.set_theme()
+# sns.set_theme()
+sns.set_palette("colorblind")
+sns.set_style('whitegrid')
+
+plt.rc('figure', figsize=(16, 9))
+plt.rc('lines', linewidth=2)
+plt.rc('axes', grid=True)
+plt.rc('grid', linestyle='--')
+plt.rc('text', usetex=True)
+plt.rc('font', family='serif', size=35)
+plt.rc('text.latex', preamble=r'\usepackage{amsmath}')
+plt.rc('legend', facecolor=[1,1,1])
+plt.rc('legend', fontsize=30)
 
 tag_ids={'ifo001': [1,2],
          'ifo002': [3,4],
@@ -67,18 +80,22 @@ for pair_i in calib_obj.ts_data:
 
 # %% Final plotting
 fig, axs = plt.subplots(2,1,sharex='all', sharey='all')
-bins=np.linspace(-0.5,1,100)
-axs[0].hist(meas_new['linear']-gt, bins=bins, density=True, alpha=0.5, label=r'Antenna-Delay Calibrated')
+bins=np.linspace(-0.5,0.8,100)
 axs[0].hist(meas_old-gt, bins=bins, density=True, alpha=0.5, label=r'Raw')
+axs[0].hist(meas_new['linear']-gt, bins=bins, density=True, alpha=0.5, label=r'Delay Calibrated')
 axs[0].set_title(r'Normal-Loss Least Squares')
+axs[0].set_yticks([0,1,2,3,4,5])
 
-axs[1].hist(meas_new['robust']-gt, bins=bins, density=True, alpha=0.5, label=r'Antenna-Delay Calibrated')
 axs[1].hist(meas_old-gt, bins=bins, density=True, alpha=0.5, label=r'Raw')
+axs[1].hist(meas_new['robust']-gt, bins=bins, density=True, alpha=0.5, label=r'Delay Calibrated')
 axs[1].set_title(r'Cauchy-Loss Least Squares')
 axs[1].set_xlabel(r'Bias [m]')
 
+fig.subplots_adjust(bottom=0.15, hspace=0.3)
+
 axs[0].legend()
 
+plt.savefig('figs/normal_vs_cauchy.pdf', dpi=300)
 plt.show(block=True)
 
 print("Raw Mean: "+ str(np.mean(meas_old-gt)))
@@ -86,6 +103,4 @@ print("Linear Antenna-Calibrated Mean: " + str(np.mean(meas_new['linear']-gt)))
 print("Robust Antenna-Calibrated Mean: " + str(np.mean(meas_new['robust']-gt)))
 print("---------------------------------------------------------------")
 
-axs[0].legend()
-plt.show(block=True)
 # %%
