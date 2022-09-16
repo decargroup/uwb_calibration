@@ -6,11 +6,23 @@ import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
-matplotlib.use('Qt5Agg')
+# matplotlib.use('Qt5Agg')
 from matplotlib import rc
 rc('text', usetex=True)
 
-sns.set_theme()
+sns.set_palette("colorblind")
+sns.set_style('whitegrid')
+
+plt.rc('figure', figsize=(16, 9))
+plt.rc('lines', linewidth=2)
+plt.rc('axes', grid=True)
+plt.rc('grid', linestyle='--')
+plt.rc('text', usetex=True)
+plt.rc('font', family='serif', size=35)
+plt.rc('text.latex', preamble=r'\usepackage{amsmath}')
+plt.rc('legend', facecolor=[1,1,1])
+plt.rc('legend', fontsize=30)
+plt.rcParams['figure.constrained_layout.use'] = True
 
 # tag_ids={'ifo001': [1,2],
 #          'ifo002': [3,4],
@@ -336,18 +348,23 @@ all_t = all_t[idx]
 # axs[2].hist(all_bias_delay, bins=bins, density=True, alpha=0.5, color='r')
 # axs[2].hist(all_bias_calib, bins=bins, density=True, alpha=0.5, color='g')
 
+colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
 fig,axs = plt.subplots(2,1,sharex=True, sharey=True)
 bins = np.linspace(-0.3,0.7,100)
-axs[0].hist(np.clip(all_bias_old, bins[0], bins[-1]), bins=bins, density=True, alpha=0.5, color='b', label='Raw')
-axs[0].hist(np.clip(all_bias_delay, bins[0], bins[-1]), bins=bins, density=True, alpha=0.5, color='r', label='Antenna-Delay Calibrated')
-axs[1].hist(np.clip(all_bias_delay, bins[0], bins[-1]), bins=bins, density=True, alpha=0.5, color='r')
-axs[1].hist(np.clip(all_bias_calib, bins[0], bins[-1]), bins=bins, density=True, alpha=0.5, color='g', label='Fully Calibrated')
+axs[0].hist(np.clip(all_bias_old, bins[0], bins[-1]), bins=bins, density=True, alpha=0.5, color=colors[0], label='Raw')
+axs[0].hist(np.clip(all_bias_delay, bins[0], bins[-1]), bins=bins, density=True, alpha=0.5, color=colors[1], label='Antenna-Delay Calibrated')
+axs[1].hist(np.clip(all_bias_delay, bins[0], bins[-1]), bins=bins, density=True, alpha=0.5, color=colors[1])
+axs[1].hist(np.clip(all_bias_calib, bins[0], bins[-1]), bins=bins, density=True, alpha=0.5, color=colors[2], label='Fully Calibrated')
 
-lgnd = fig.legend(fontsize=50, ncol=3, loc='upper center')
+axs[0].set_yticks([0,2,4,6])
+axs[1].set_yticks([0,2,4,6])
+
+lgnd = fig.legend(ncol=3, loc='upper center')
 # fig.suptitle(r"Calibration Results on Test Data", fontsize=36)
-axs[1].set_xlabel(r"Range Bias [m]", fontsize=50)
-axs[0].tick_params(axis='both', labelsize=50)
-axs[1].tick_params(axis='both', labelsize=50)
+axs[1].set_xlabel(r"Range Bias [m]")
+
+fig.subplots_adjust(bottom=0.15, hspace=0.2)
+fig.savefig('figs/test_data_histograms.pdf', dpi=300)
 
 plt.show(block=True)
 # %%
@@ -359,59 +376,60 @@ pair_i = (1,5)
 bias = meas_calib[pair_i] - gt[pair_i]
 eps = bias**2 / std_calib[pair_i]**2
 inliers = (eps < 3.84) & (np.abs(bias)<3)
-axs[0].scatter(t[pair_i][inliers],bias[inliers], s=40, label=r"Inliers")
-axs[0].scatter(t[pair_i][~inliers],bias[~inliers], s=40, label=r"Outliers")
+axs[0].scatter(t[pair_i][inliers],bias[inliers], s=10, label=r"Inliers")
+axs[0].scatter(t[pair_i][~inliers],bias[~inliers], s=10, label=r"Outliers")
 axs[0].fill_between(t[pair_i][inliers],
     -2*std_calib[pair_i][inliers],
     2*std_calib[pair_i][inliers],
-    color='b',
-    alpha=0.5,
+    color=colors[0],
+    alpha=0.3,
     label=r"95\% confidence interval",
     )
 axs[0].set_ylim(-0.5,1)
 
-axs[0].set_ylabel(r'Bias [m]', fontsize=70)
-axs[0].set_yticks([-0.5, -0.25, 0, 0.25, 0.5, 0.75, 1.00])
-# axs[0].set_xlabel(r'Time [s]', fontsize=70)
+axs[0].set_ylabel(r'Bias [m]')
+axs[0].set_yticks([-0.5, 0, 0.5, 1.00])
 
 mean_inlier_error = np.mean(bias[inliers])
 std_inlier_error = np.std(bias[inliers])
 perc_inliers = np.sum(inliers)/len(eps)*100
 pair_print = str((int(pair_i[0]),int(pair_i[1])))
-axs[0].set_title(r'\textbf{Inliers}: %2.2f\%%, \textbf{Mean}: %1.3f [cm], \textbf{Std.}: %1.3f [cm]' % (perc_inliers, mean_inlier_error*100, std_inlier_error*100),
-                fontsize=70)
-axs[0].tick_params(axis='both', labelsize=70)
+axs[0].set_title(r'\textbf{Inliers}: %2.2f\%%, \textbf{Mean}: %1.3f [cm], \textbf{Std.}: %1.3f [cm]' \
+                 % (perc_inliers, mean_inlier_error*100, std_inlier_error*100),
+                 fontsize=30)
 
 pair_i = (4,7)
 bias = meas_calib[pair_i] - gt[pair_i]
 eps = bias**2 / std_calib[pair_i]**2
 inliers = (eps < 3.84) & (np.abs(bias)<3)
-axs[1].scatter(t[pair_i][inliers],bias[inliers], s=40)
-axs[1].scatter(t[pair_i][~inliers],bias[~inliers], s=40)
+axs[1].scatter(t[pair_i][inliers],bias[inliers], s=10)
+axs[1].scatter(t[pair_i][~inliers],bias[~inliers], s=10)
 axs[1].fill_between(t[pair_i][inliers],
     -2*std_calib[pair_i][inliers],
     2*std_calib[pair_i][inliers],
-    color='b',
-    alpha=0.5,
+    color=colors[0],
+    alpha=0.3,
     )
 axs[1].set_ylim(-0.5,1)
 
-axs[1].set_ylabel(r'Bias [m]', fontsize=70)
-axs[1].set_yticks([-0.5, -0.25, 0, 0.25, 0.5, 0.75, 1.00])
-axs[1].set_xlabel(r'Time [s]', fontsize=70)
+axs[1].set_ylabel(r'Bias [m]')
+axs[1].set_yticks([-0.5, 0, 0.5, 1.00])
+axs[1].set_xlabel(r'Time [s]')
 
 mean_inlier_error = np.mean(bias[inliers])
 std_inlier_error = np.std(bias[inliers])
 perc_inliers = np.sum(inliers)/len(eps)*100
 pair_print = str((int(pair_i[0]),int(pair_i[1])))
-axs[1].set_title(r'\textbf{Inliers}: %2.2f\%%, \textbf{Mean}: %1.3f [cm], \textbf{Std.}: %1.3f [cm]' % (perc_inliers, mean_inlier_error*100, std_inlier_error*100),
-                fontsize=70)
-axs[1].tick_params(axis='both', labelsize=70)
+axs[1].set_title(r'\textbf{Inliers}: %2.2f\%%, \textbf{Mean}: %1.3f [cm], \textbf{Std.}: %1.3f [cm]' \
+                 % (perc_inliers, mean_inlier_error*100, std_inlier_error*100),
+                 fontsize=30)
 
 # fig.suptitle(r"Test-Data Calibrated Measurements", fontsize=36)
-lgnd = axs[0].legend(fontsize=60, ncol=3, loc="upper right")
+lgnd = fig.legend(ncol=3, loc="upper center")
 lgnd.legendHandles[0]._sizes = [150]
 lgnd.legendHandles[1]._sizes = [150]
 
+fig.subplots_adjust(top=0.8,bottom=0.15, hspace=0.3)
+fig.savefig('figs/test_data_calibrated_measurements_2pairs.pdf', dpi=300)
 plt.show(block=True)
 # %%
