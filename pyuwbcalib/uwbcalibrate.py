@@ -86,6 +86,66 @@ class UwbCalibrate(PostProcess):
         
         return lower_idx, upper_idx
 
+    def calibrate_antennas(self, loss='cauchy'):
+        """
+        Calibrate the antenna delays by formulating and solving a linear least-squares problem.
+
+        RETURNS:
+        --------
+        dict: Dictionary with 3 fields each for tag z \in {i,j,k}
+            Module i: (float)
+                Antenna delay for tag i
+        """
+        tags = sum(list(self.tag_ids.values()),[])
+
+        A = np.zeros((0,len(tags)))
+        b = np.zeros((0,1))
+        for pair in self.tag_pairs:
+            K = self._calculate_skew_gain(pair)
+            A = np.vstack((A, self._setup_A_matrix(pair, tags, K)))
+            b = np.vstack((b, self._setup_b_vector(pair, K)))
+
+        nan_idx = ~np.isnan(b)
+        nan_idx = nan_idx.flatten()
+        A = A[nan_idx, :]
+        b = b[nan_idx]
+
+        x = self._solve_for_antenna_delays(A, b, loss)['x']
+        x = x.flatten()
+
+        print(np.linalg.norm(b))
+        print(np.linalg.norm(b.T - A @ x))
+
+        self.delays = x
+
+        return {id: x[i] for i,id in enumerate(tags)}
+
+    def correct_antenna_delay(self, delays_dict):
+        """
+        Modifies the data of this object to correct for the antenna delay of a
+        specific module.
+
+        PARAMETERS:
+        -----------
+        id: int
+            Module ID whose antenna delay is to be corrected.
+        delay: float
+            The amount of antenna delay, in nanoseconds.
+
+        TODO: What about D1 and D2? This seems to be a problem.
+              We might have to calibrate for TX and RX delays separately
+              if we are to proceed with Kalman filtering with this architecture.
+        TODO: tof1, tof2, and tof3 as well, once individual delays are taken into consideration.
+        TODO: access delays from self object
+        """
+        for id in delays_dict.keys():
+            delay = delays_dict[id]
+            for pair in self.time_intervals:
+                if pair[0] == id:
+                    self.time_intervals[pair]["Ra1"] += delay
+                elif pair[1] == id:
+                    self.time_intervals[pair]["Db1"] -= delay
+
     def _calculate_skew_gain(self, pair):
         """
         Calculates the K parameter given by Ra2/Db2.
@@ -221,115 +281,6 @@ class UwbCalibrate(PostProcess):
         if self.mult_twr:
             self.time_intervals[pair]["tof3"] \
                 = self.time_intervals[pair]["tof3"] + tau
-
-    @staticmethod
-    def _plot_kf(x, P, axs, y_tau, outliers):
-        inliers = ~outliers
-        axs.plot(x[0,inliers]-y_tau[inliers])
-
-        axs.ticklabel_format(style='plain')
-        
-        P_iter = P[1,1,:]
-        P_iter = P_iter.reshape(-1,)
-        axs.plot(x[0,:] + 3*np.sqrt(P_iter))
-        axs.plot(x[0,:] - 3*np.sqrt(P_iter))
-
-    def _clock_filter(self, pair, Q, R):
-        # Intervals
-        dt = self.time_intervals[pair]["dt"]
-        Ra2 = self.time_intervals[pair]["Ra2"]
-        Db2 = self.time_intervals[pair]["Db2"]
-        S1 = self.time_intervals[pair]["S1"]
-        S2 = self.time_intervals[pair]["S2"]
-        Db1 = self.time_intervals[pair]["Db1"]
-
-        # Storage variables
-        n = dt.size
-        x_hist = np.zeros((2,n))
-        P_hist = np.zeros((2,2,n))
-        kf_outliers_idx = np.zeros((n,), dtype=bool)
-
-        # Initial estimate and uncertainty
-        tau = 0
-        skew = 0
-        x = np.array([tau, skew])
-        x = x.reshape(2,1)
-        P = np.array(([1e18,0],[0,1e9])) # TODO: better estimate of initial uncertainty
-        # P = np.array(([1,0],[0,1])) # TODO: better estimate of initial uncertainty
-
-        for lv0, dt_iter in enumerate(dt):
-            Ra2_iter = Ra2[lv0]
-            Db2_iter = Db2[lv0]
-            S1_iter = S1[lv0]
-            S2_iter = S2[lv0]
-            Db1_iter = Db1[lv0]
-
-            if lv0>0:
-                x, P = self._propagate_clocks(x, P, dt_iter, Q)
-                P = 0.5*(P + P.T)
-
-            y = self._compute_pseudomeasurement(Ra2_iter, Db2_iter, S1_iter, S2_iter, Db1_iter)
-            x_temp, P_temp, reject = self._correct_clocks(x, P, y, R, Db1_iter, Db2_iter)
-
-            if reject:
-                kf_outliers_idx[lv0] = True
-            else:
-                P = 0.5*(P + P.T)
-
-                x = x_temp
-                P = P_temp
-            
-            x_hist[:,lv0] = x.reshape(2,)
-            P_hist[:,:,lv0] = P    
-            
-        return x_hist, P_hist, kf_outliers_idx
-
-    @staticmethod
-    def _compute_pseudomeasurement(Ra2, Db2, S1, S2, Db1):
-        y1 = 0.5*(S1 - S2)
-        y2 = Db2 - Ra2
-        # return np.array([y1, y2]).reshape(2,1)
-        y = - y1 - 0.5*(Db1/(Db2-Db1))*y2
-        return y
-
-    @staticmethod
-    def _correct_clocks(x, P, y, R, Db1, Db2):
-        # C = np.array([[-1,0.5*Db1/1e9], [0, -Db2/1e9]])
-        C = np.array([1, 0])
-        C = C.reshape(1,2)
-
-        y_check = C @ x
-
-        # R_matrix = np.array([[1.25*R, 0.5*R], [0.5*R, 2*R]])
-        R_matrix = R
-
-        # NIS Test
-        innovation = y - y_check
-        S = C @ P @ C.T + R_matrix
-        eps = innovation.T @ inv(S) @ innovation
-        if eps > 10:
-            reject = True
-            x_new = []
-            P_new = []
-        else:
-            K = P @ C.T @ inv(S)
-
-            reject = False
-            x_new = x + K @ innovation
-            P_new = (np.eye(2) - K @ C) @ P    
-
-        return x_new, P_new, reject
-
-    @staticmethod
-    def _propagate_clocks(x, P, dt, Q):
-        dt = dt/1e9
-        A = np.array(([1, dt], [0, 1]))
-        L = np.array(([dt, 0.5*dt**2], [0, dt]))
-
-        x_new = A @ x
-        P_new = A @ P @ A.T + L @ Q @ L.T / dt
-        
-        return x_new, P_new
 
     @staticmethod
     def _rolling_window(a, window):
@@ -592,66 +543,6 @@ class UwbCalibrate(PostProcess):
         
         fig2.subplots_adjust(bottom=0.15, hspace=0.3)
         fig2.savefig("figs/bias_power_fit.pdf", dpi=300)
-
-    def calibrate_antennas(self, loss='cauchy'):
-        """
-        Calibrate the antenna delays by formulating and solving a linear least-squares problem.
-
-        RETURNS:
-        --------
-        dict: Dictionary with 3 fields each for tag z \in {i,j,k}
-            Module i: (float)
-                Antenna delay for tag i
-        """
-        tags = sum(list(self.tag_ids.values()),[])
-
-        A = np.zeros((0,len(tags)))
-        b = np.zeros((0,1))
-        for pair in self.tag_pairs:
-            K = self._calculate_skew_gain(pair)
-            A = np.vstack((A, self._setup_A_matrix(pair, tags, K)))
-            b = np.vstack((b, self._setup_b_vector(pair, K)))
-
-        nan_idx = ~np.isnan(b)
-        nan_idx = nan_idx.flatten()
-        A = A[nan_idx, :]
-        b = b[nan_idx]
-
-        x = self._solve_for_antenna_delays(A, b, loss)['x']
-        x = x.flatten()
-
-        print(np.linalg.norm(b))
-        print(np.linalg.norm(b.T - A @ x))
-
-        self.delays = x
-
-        return {id: x[i] for i,id in enumerate(tags)}
-
-    def correct_antenna_delay(self, delays_dict):
-        """
-        Modifies the data of this object to correct for the antenna delay of a
-        specific module.
-
-        PARAMETERS:
-        -----------
-        id: int
-            Module ID whose antenna delay is to be corrected.
-        delay: float
-            The amount of antenna delay, in nanoseconds.
-
-        TODO: What about D1 and D2? This seems to be a problem.
-              We might have to calibrate for TX and RX delays separately
-              if we are to proceed with Kalman filtering with this architecture.
-        TODO: tof1, tof2, and tof3 as well, once individual delays are taken into consideration.
-        TODO: access delays from self object
-        """
-        for id in delays_dict.keys():
-            delay = delays_dict[id]
-            for pair in self.time_intervals:
-                if pair[0] == id:
-                    self.time_intervals[pair]["Ra1"] += delay
-                elif pair[1] == id:
-                    self.time_intervals[pair]["Db1"] -= delay
 
     def compute_range_meas(self, pair=(1,2), visualize=False, owr = False):
         # TODO: Inherit this function from PostProcess?
