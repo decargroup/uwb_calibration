@@ -1,170 +1,90 @@
 import numpy as np
+from .postprocess import PostProcess
 from numpy.linalg import inv
 import matplotlib.pyplot as plt
 from scipy.interpolate import UnivariateSpline
 from scipy.optimize import least_squares
 import pickle
+import pandas as pd
 
-class UwbCalibrate(object):
-    """
-    # TODO: Update this and subsequent documentation.
-    Object to handle calibration for the DECAR/MRASL UWB modules.
-
-    PARAMETERS:
-    -----------
-    filename_1: str
-        Relative address of the file containing the timestamps of the TWR instances initiated
-        by the first tag (hereafter referred to as "tag i").
-    filename_2: str
-        Relative address of the file containing the timestamps of the TWR instances initiated
-        by the second tag (hereafter referred to as "tag j").
-    tag_ids: list of ints
-        List of IDs of the three tags involved in the calibration procedure.
-        The order is as follows:
-            1) TWR initializer in filename_1 (tag i).
-            2) TWR initializer in filename_2 (tag j).
-            3) The tag that never initialized a TWR instance (tag k).
-    average: bool
-        Flag to indicate whether measurements from static intervals should be averaged out.
-    static: bool
-        Flag to indicate whether the calibration experiment was done with static intervals.
-    thresh: float
-        Threshold to detect clock wraps and outliers, in nanoseconds.
-    """
-
+class UwbCalibrate(PostProcess):
     _c = 299702547  # speed of light
-
-    def __init__(self, processed_data, rm_static=True):
+    _inherited = [
+                  'df',
+                  'machine_ids',
+                  'tag_ids',
+                  'ds_twr',
+                  'fpp_exists',
+                 ]
+    
+    def __init__(self, 
+                 data, 
+                 rm_static = False, 
+                 f_lift=lambda x: 10**((x + 82)/10)):
         """
         Constructor
         """
-        # Retrieve attributes from processed_data
-        self.tag_ids = processed_data.tag_ids
-        self.mult_twr = processed_data.mult_twr
-        self.num_meas = processed_data.num_meas
-        self.tag_pairs = processed_data.tag_pairs
-        self.num_of_tags = processed_data.num_of_tags
-
+        self._data = data
+        
         if rm_static:
-            self.ts_data = {}
-            self.time_intervals = {}
-            self.ts_data, self.time_intervals \
-                = self._remove_static_regions(processed_data.ts_data, processed_data.time_intervals)
-        else:
-            self.ts_data = processed_data.ts_data
-            self.time_intervals = processed_data.time_intervals
+            self._remove_static_regions()
 
-        self.range_idx = 2
-        self.tx1_idx = 3
-        self.rx1_idx = 4
-        self.tx2_idx = 5
-        self.rx2_idx = 6
-        self.tx3_idx = 7
-        self.rx3_idx = 8
-        self.fpp1_idx = 9
-        self.fpp2_idx = 10
-        self.rxp1_idx = 11
-        self.rxp2_idx = 12
-        self.std1_idx = 13
-        self.std2_idx = 14
+        self.lift = f_lift
 
-        self.lift = processed_data.lift
+    def __getattr__(self, attr):
+        if attr in self._inherited:
+            return getattr(self._data, attr)
 
-    def _remove_static_regions(self, ts_data, time_intervals):
+    def _remove_static_regions(self):
         '''
         Remove the static region in the extremes.
-        '''
-        lower_idxs, upper_idxs = self._find_static_extremes(ts_data, time_intervals)
-        
-        num_columns = 15
-        num_rows = lambda pair: upper_idxs[pair] - lower_idxs[pair] 
-        ts_data_trunc = {pair:np.zeros((num_rows(pair), num_columns)) for \
-                                                                pair in ts_data}
-        time_intervals_trunc = {pair:{} for pair in ts_data}
-
-        for pair in ts_data:
-            l_idx = lower_idxs[pair]
-            u_idx = upper_idxs[pair]
-            
-            for column in range(0,num_columns):
-                ts_data_trunc[pair][:,column] \
-                    = ts_data[pair][:,column][l_idx:u_idx]
-
-            for topic in time_intervals[pair]:
-                time_intervals_trunc[pair][topic] \
-                    = time_intervals[pair][topic][l_idx:u_idx]
-
-        return ts_data_trunc, time_intervals_trunc
-
-    @staticmethod
-    def _find_static_extremes(ts_data, time_intervals):
-        lower_idxs = {pair:[] for pair in ts_data}
-        upper_idxs = {pair:[] for pair in ts_data}
-        
-        thresh = 0.2
+        TODO: extensively test this with a few datasets.
+        '''        
+        thresh = 0.1
         window = 10 # size of windows
+        
+        lower_idx = 0
+        upper_idx = np.Inf
 
-        for pair in ts_data:
-            gt = time_intervals[pair]['r_gt']
+        for machine_i in self.machine_ids:
+            r_iw_a = self.get_machine_pos(machine_i, as_numpy = True)
             
             # Lower bound
-            p1 = gt[0]
-            p2 = gt[window//2]
-            p3 = gt[window]
-
-            mean = (p1+p2+p3)/3
-            cond1 = np.abs(p1 - mean) > thresh
-            cond2 = np.abs(p2 - mean) > thresh
-            cond3 = np.abs(p3 - mean) > thresh
-            if cond1 or cond2 or cond3:
-                lower_idxs[pair] = 0
-            else:
-                mean = np.mean(gt[:window])
-                deviation = gt - mean
-                deviation_bool = deviation > thresh
-
-                # Find the first 2 consecutive true values
-                found_idx = False
-                for lv0 in range(window, len(gt)-5):
-                    cond = np.all(deviation_bool[lv0:lv0+2])
-                    if cond:
-                        lower_idxs[pair] = lv0
-                        found_idx = True
-                        break
-
-                if not found_idx:
-                    lower_idxs[pair] = 0
-
-            # Upper bound
-            p1 = gt[-1]
-            p2 = gt[-window//2]
-            p3 = gt[-window]
-
-            mean = (p1+p2+p3)/3
-            cond1 = np.abs(p1 - mean) > thresh
-            cond2 = np.abs(p2 - mean) > thresh
-            cond3 = np.abs(p3 - mean) > thresh
-            if cond1 or cond2 or cond3:
-                upper_idxs[pair] = len(gt)
-            else:
-                mean = np.mean(gt[-window:])
-                deviation = gt - mean
-                deviation_bool = deviation > thresh
-
-                # Find the first 2 consecutive true values
-                found_idx = False
-                for lv0 in range(-window, -len(gt)+5):
-                    cond = np.all(deviation_bool[lv0:lv0-2])
-                    if cond:
-                        upper_idxs[pair] = lv0
-                        found_idx = True
-                        break
-
-                if not found_idx:
-                    upper_idxs[pair] = len(gt)
-
-        return lower_idxs, upper_idxs
- 
+            x = r_iw_a[:,0]
+            y = r_iw_a[:,1]
+            z = r_iw_a[:,2]
+            
+            x_lower, x_upper = self._find_static_extremes(x, thresh, window)
+            y_lower, y_upper = self._find_static_extremes(y, thresh, window)
+            z_lower, z_upper = self._find_static_extremes(z, thresh, window)
+            
+            lowest_low_idx = np.min([x_lower, y_lower, z_lower])
+            highest_upper_idx = np.max([x_upper, y_upper, z_upper])
+            
+            if lowest_low_idx > lower_idx:
+                lower_idx = lowest_low_idx
+            
+            if highest_upper_idx < upper_idx:
+                upper_idx = highest_upper_idx
+            
+        n = len(self.df)
+        self.df.drop(np.linspace(0,lower_idx,lower_idx+1), inplace=True)
+        self.df.drop(np.linspace(upper_idx, n-1, n-upper_idx), inplace=True)
+        # self.df.reset_index(inplace=True, drop=True)
+        
+    @staticmethod
+    def _find_static_extremes(r, thresh, window):
+        rolling_mean = pd.DataFrame(r).rolling(window, center=True).mean()
+        rolling_mean = rolling_mean.fillna(method="bfill").fillna(method="ffill")
+        rolling_mean = np.array(rolling_mean)
+        
+        diff_lower = np.abs(rolling_mean[1:] - rolling_mean[0])
+        diff_upper = np.abs(np.flip(rolling_mean)[1:] - rolling_mean[-1])
+        
+        lower_idx = np.argmax(diff_lower>thresh)
+        upper_idx = len(diff_lower) - np.argmax(np.flip(diff_upper)>thresh) - 1
+        
+        return lower_idx, upper_idx
 
     def _calculate_skew_gain(self, pair):
         """

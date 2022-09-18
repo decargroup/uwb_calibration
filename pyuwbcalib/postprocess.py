@@ -1,10 +1,18 @@
 import numpy as np
-from bagpy import bagreader
 import pandas as pd
-from itertools import combinations
-import matplotlib.pyplot as plt
 from pylie import SO3
 from scipy.interpolate import interp1d
+import pickle
+
+def save(obj, filename="data.pickle"):
+        with open(filename,"wb") as file:
+            pickle.dump(obj, file)
+
+def load(filename='data.pickle'):
+    with open(filename, 'rb') as pickle_file:
+        data = pickle.load(pickle_file)
+        
+    return data
 
 class PostProcess(object):
     """
@@ -22,9 +30,7 @@ class PostProcess(object):
     num_meas: float
         Number of measurements to process. -1 means no cap. Default: -1.
 
-    TODO 1: Check for missing rigid bodies when checking bag files.
-         2: Add tests.
-         3: Should I do all this in Pandas?
+    TODO: Add tests.
     """
     
     def __init__(
@@ -278,6 +284,14 @@ class PostProcess(object):
         return data
     ### ------------------------------------------------------------------------ ###
 
+    ### -------------------------- GET PARAMS METHODS -------------------------- ###
+    def get_machine_pos(self, machine_id, as_numpy = False):
+        if as_numpy:
+            return np.vstack(self.df['r_iw_a_' + machine_id])
+        else:
+            return self.df['r_iw_a_' + machine_id]
+
+    ### ------------------------------------------------------------------------ ###
 
     ### --------------------------- PLOTTING METHODS --------------------------- ###
 

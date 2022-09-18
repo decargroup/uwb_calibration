@@ -1,6 +1,6 @@
 # %%
 from pyuwbcalib.machine import RosMachine
-from pyuwbcalib.postprocess import PostProcess
+from pyuwbcalib.postprocess import PostProcess, save
 from configparser import ConfigParser, ExtendedInterpolation
 
 config_file = 'config/ifo_3_drones_rosbag.config'
@@ -18,4 +18,5 @@ for i,machine in enumerate(parser['MACHINES']):
                                       ts_to_ns = ts_to_ns)
 # %%
 data = PostProcess(machines)
+save(data)
 # %%
