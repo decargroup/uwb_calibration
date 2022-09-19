@@ -86,7 +86,11 @@ class UwbCalibrate(PostProcess):
         
         return lower_idx, upper_idx
 
-    def calibrate_antennas(self, loss='cauchy'):
+    def calibrate_antennas(
+                            self, 
+                            loss='cauchy', 
+                            tx_rx_split={'tx':60, 'rx':40},
+                          ):
         """
         Calibrate the antenna delays by formulating and solving a linear least-squares problem.
 
@@ -96,31 +100,35 @@ class UwbCalibrate(PostProcess):
             Module i: (float)
                 Antenna delay for tag i
         """
-        tags = sum(list(self.tag_ids.values()),[])
-
-        A = np.zeros((0,len(tags)))
-        b = np.zeros((0,1))
-        for pair in self.tag_pairs:
-            K = self._calculate_skew_gain(pair)
-            A = np.vstack((A, self._setup_A_matrix(pair, tags, K)))
-            b = np.vstack((b, self._setup_b_vector(pair, K)))
-
-        nan_idx = ~np.isnan(b)
-        nan_idx = nan_idx.flatten()
-        A = A[nan_idx, :]
-        b = b[nan_idx]
+        tags = list(np.concatenate(list(self.tag_ids.values())).flat)
+        n = len(self.df)
+        
+        from_idx = [tags.index(x) for x in np.array(self.df["from_id"])]
+        to_idx = [tags.index(x) for x in np.array(self.df["to_id"])]
+        rows = np.linspace(0,n-1,n).astype(int)
+        
+        if self.ds_twr:
+            K = self.df["del_t3"] / self.df["del_t4"]
+        else:
+            K = 1
+        
+        A = np.zeros((n,len(tags)))
+        A[rows, from_idx] += 0.5
+        A[rows, to_idx] += 0.5 * K
+        
+        b = 1 / self._c * self.df["gt_range"] * 1e9 \
+            - 0.5 * self.df["del_t1"] \
+            + 0.5 * K * self.df["del_t2"]
+        b = np.array(b)
 
         x = self._solve_for_antenna_delays(A, b, loss)['x']
         x = x.flatten()
 
-        print(np.linalg.norm(b))
-        print(np.linalg.norm(b.T - A @ x))
+        self.delays = {id: x[i] for i,id in enumerate(tags)}
+        
+        # self._correct_antenna_delays(tx_rx_split)
 
-        self.delays = x
-
-        return {id: x[i] for i,id in enumerate(tags)}
-
-    def correct_antenna_delay(self, delays_dict):
+    def _correct_antenna_delay(self, tx_rx_split):
         """
         Modifies the data of this object to correct for the antenna delay of a
         specific module.
@@ -138,6 +146,9 @@ class UwbCalibrate(PostProcess):
         TODO: tof1, tof2, and tof3 as well, once individual delays are taken into consideration.
         TODO: access delays from self object
         """
+        
+        # TODO: DO SOMETHING SIMILAR TO LINES 106, 107, 116, 117
+        
         for id in delays_dict.keys():
             delay = delays_dict[id]
             for pair in self.time_intervals:
@@ -145,82 +156,6 @@ class UwbCalibrate(PostProcess):
                     self.time_intervals[pair]["Ra1"] += delay
                 elif pair[1] == id:
                     self.time_intervals[pair]["Db1"] -= delay
-
-    def _calculate_skew_gain(self, pair):
-        """
-        Calculates the K parameter given by Ra2/Db2.
-        Gain set to 1 if twr_type == 0.
-
-        PARAMETERS:
-        -----------
-        initiating_idx: int
-            The index of the initiating tag (initiator) in self.tag_ids.
-        target_idx: int
-            The index of the target tag in self.tag_ids.
-
-        RETURNS:
-        --------
-        np.array: The K values for all the measurements.
-        """
-        Ra2 = self.time_intervals[pair]["Ra2"]
-        Db2 = self.time_intervals[pair]["Db2"]
-
-        if self.mult_twr:
-            return Ra2 / Db2
-        else:
-            return Ra2 / Ra2
-
-    def _setup_A_matrix(self, pair, tags, K):
-        """
-        Calculates the A matrix for the linear least-squares problem.
-
-        PARAMETERS:
-        -----------
-        K: np.array
-            The skew gain K.
-        initiating_idx: int
-            The index of the initiating tag (initiator) in self.tag_ids.
-        target_idx: int
-            The index of the target tag in self.tag_ids.
-
-        RETURNS:
-        --------
-        2D np.array: The A matrix.
-        """
-        initiating_idx = tags.index(pair[0])
-        target_idx = tags.index(pair[1]) 
-
-        n = len(K)
-        A = np.zeros((n, len(tags)))
-        A[:, initiating_idx] += 0.5
-        A[:, target_idx] = 0.5 * K
-
-        return A
-
-    def _setup_b_vector(self, pair, K):
-        """
-        Calculates the b vector for the linear least-squares problem.
-
-        PARAMETERS:
-        -----------
-        K: np.array
-            The skew gain K.
-        initiating_idx: int
-            The index of the initiating tag (initiator) in self.tag_ids.
-        target_idx: int
-            The index of the target tag in self.tag_ids.
-
-        RETURNS:
-        --------
-        np.array: The b vector.
-        """
-        gt = self.time_intervals[pair]["r_gt"]
-        Ra1 = self.time_intervals[pair]["Ra1"]
-        Db1 = self.time_intervals[pair]["Db1"]
-
-        b = 1 / self._c * gt * 1e9 - 0.5 * (Ra1) + 0.5 * K * (Db1)
-
-        return np.reshape(b, (len(K), 1))
 
     def _solve_for_antenna_delays(self, A, b, loss):
         """
@@ -244,43 +179,6 @@ class UwbCalibrate(PostProcess):
     @staticmethod
     def _cost_func(x,A,b):
         return (A@x - b).reshape(-1,)
-
-    def filter_data(self, Q, R, visualize=False):
-        if visualize:
-            num_of_pairs = len(self.time_intervals)
-            fig, axs = plt.subplots(num_of_pairs, sharey='all', sharex='all')
-
-        for lv0, pair in enumerate(self.tag_pairs):
-            x_hist, P_hist, kf_outliers_idx = self._clock_filter(pair, Q, R)
-            
-            self._update_tof_intervals(pair, x_hist[0,:])
-
-            if visualize: 
-                Ra2 = self.time_intervals[pair]["Ra2"]
-                Db2 = self.time_intervals[pair]["Db2"]
-                S1 = self.time_intervals[pair]["S1"]
-                S2 = self.time_intervals[pair]["S2"]
-                Db1 = self.time_intervals[pair]["Db1"]
-                y1 = 0.5*(S1 - S2)
-                y2 = Db2 - Ra2
-                y_tau = - y1 - 0.5*(Db1/(Db2-Db1))*y2
-
-                self._plot_kf(x_hist, P_hist, axs[lv0], y_tau, kf_outliers_idx)
-
-        if visualize:
-            plt.show()
-
-    def _update_tof_intervals(self, pair, tau):
-        # TODO: Take uncertainty into consideration?
-        self.time_intervals[pair]["tof1"] \
-            = self.time_intervals[pair]["tof1"] - tau
-
-        self.time_intervals[pair]["tof2"] \
-            = self.time_intervals[pair]["tof2"] + tau
-
-        if self.mult_twr:
-            self.time_intervals[pair]["tof3"] \
-                = self.time_intervals[pair]["tof3"] + tau
 
     @staticmethod
     def _rolling_window(a, window):

@@ -102,6 +102,7 @@ class PostProcess(object):
             all_dfs = all_dfs + [machines[machine].df_uwb]
         self.df = pd.concat(all_dfs)
         self.df.reset_index(inplace=True, drop=True)
+        self.df.rename(columns={'range':'raw_range'}, inplace=True)
     
     def _store_pose_data(self, machines):
         t_new = self.df["time"]
@@ -154,23 +155,23 @@ class PostProcess(object):
         
     @staticmethod 
     def _get_bias(df):
-        return df['range'] - df['gt_range']
+        return df['raw_range'] - df['gt_range']
 
     def _get_pairs(self):
         self.df['pair'] = tuple(zip(self.df.from_id, self.df.to_id))
         self.pair_list = list(self.df['pair'].unique())
     
     def _compute_intervals(self):
-        self.df["Ra1"] = self.df['rx2'] - self.df['tx1']
-        self.df["Db1"] = self.df['tx2'] - self.df['rx1']
+        self.df["del_t1"] = self.df['rx2'] - self.df['tx1']
+        self.df["del_t2"] = self.df['tx2'] - self.df['rx1']
         self.df["tof1"] = self.df['rx1'] - self.df['tx1']
         self.df["tof2"] = self.df['rx2'] - self.df['tx2']
-        self.df["S1"] = self.df['rx2'] + self.df['tx1']
-        self.df["S2"] = self.df['tx2'] + self.df['rx1']
+        self.df["sum_t1"] = self.df['rx2'] + self.df['tx1']
+        self.df["sum_t2"] = self.df['tx2'] + self.df['rx1']
         
         if self.ds_twr:
-            self.df["Ra2"] = self.df['rx3'] - self.df['rx2']
-            self.df["Db2"] = self.df['tx3'] - self.df['tx2']
+            self.df["del_t3"] = self.df['rx3'] - self.df['rx2']
+            self.df["del_t4"] = self.df['tx3'] - self.df['tx2']
             self.df["tof3"] = self.df['rx3'] - self.df['tx3']
 
     @staticmethod

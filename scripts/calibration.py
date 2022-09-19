@@ -7,5 +7,7 @@ c = 299702547
 data = load()
 
 calib = UwbCalibrate(data, rm_static=True)
+calib.calibrate_antennas()
+#NOW NEED TO DO THE ANTENNA DELAY CORRECTION
 
 # %%
