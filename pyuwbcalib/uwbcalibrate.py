@@ -89,7 +89,7 @@ class UwbCalibrate(PostProcess):
     def calibrate_antennas(
                             self, 
                             loss='cauchy', 
-                            tx_rx_split={'tx':60, 'rx':40},
+                            tx_rx_split={'tx':0.6, 'rx':0.4},
                           ):
         """
         Calibrate the antenna delays by formulating and solving a linear least-squares problem.
@@ -126,12 +126,14 @@ class UwbCalibrate(PostProcess):
 
         self.delays = {id: x[i] for i,id in enumerate(tags)}
         
-        # self._correct_antenna_delays(tx_rx_split)
+        self._correct_antenna_delays(tx_rx_split)
 
-    def _correct_antenna_delay(self, tx_rx_split):
+    def _correct_antenna_delays(self, tx_rx_split):
         """
         Modifies the data of this object to correct for the antenna delay of a
         specific module.
+
+        Mention that individual timestamps is based on Decawave's split of 60 40.
 
         PARAMETERS:
         -----------
@@ -147,15 +149,25 @@ class UwbCalibrate(PostProcess):
         TODO: access delays from self object
         """
         
-        # TODO: DO SOMETHING SIMILAR TO LINES 106, 107, 116, 117
+        from_delay = np.array([self.delays[x] for x in np.array(self.df["from_id"])])
+        to_delay = np.array([self.delays[x] for x in np.array(self.df["to_id"])])
         
-        for id in delays_dict.keys():
-            delay = delays_dict[id]
-            for pair in self.time_intervals:
-                if pair[0] == id:
-                    self.time_intervals[pair]["Ra1"] += delay
-                elif pair[1] == id:
-                    self.time_intervals[pair]["Db1"] -= delay
+        self.df["del_t1"] += from_delay
+        self.df["del_t2"] -= to_delay
+        
+        tx_from_delay = tx_rx_split['tx'] * from_delay
+        rx_from_delay = tx_rx_split['rx'] * from_delay
+        tx_to_delay = tx_rx_split['tx'] * to_delay
+        rx_to_delay = tx_rx_split['rx'] * to_delay
+
+        self.df["tx1"] = -tx_from_delay
+        self.df["rx2"] = rx_from_delay
+
+        self.df["rx1"] = rx_to_delay
+        self.df["tx2"] = -tx_to_delay
+
+        self.df["tx3"] = -tx_to_delay
+        self.df["rx3"] = rx_to_delay
 
     def _solve_for_antenna_delays(self, A, b, loss):
         """
