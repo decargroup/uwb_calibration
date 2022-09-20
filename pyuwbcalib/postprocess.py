@@ -102,7 +102,6 @@ class PostProcess(object):
             all_dfs = all_dfs + [machines[machine].df_uwb]
         self.df = pd.concat(all_dfs)
         self.df.reset_index(inplace=True, drop=True)
-        self.df.rename(columns={'range':'raw_range'}, inplace=True)
     
     def _store_pose_data(self, machines):
         t_new = self.df["time"]
@@ -155,7 +154,7 @@ class PostProcess(object):
         
     @staticmethod 
     def _get_bias(df):
-        return df['raw_range'] - df['gt_range']
+        return df['range'] - df['gt_range']
 
     def _get_pairs(self):
         self.df['pair'] = tuple(zip(self.df.from_id, self.df.to_id))
@@ -284,7 +283,7 @@ class PostProcess(object):
 
         return data
     ### ------------------------------------------------------------------------ ###
-
+    
     ### -------------------------- GET PARAMS METHODS -------------------------- ###
     def get_machine_pos(self, machine_id, as_numpy = False):
         if as_numpy:
