@@ -205,8 +205,7 @@ class UwbCalibrate(PostProcess):
     @staticmethod
     def _rolling_window(a, window):
         '''
-        Copied from 
-        https://stackoverflow.com/questions/27427618/how-can-i-simply-calculate-the-rolling-moving-variance-of-a-time-series-in-pytho
+        Copied from shorturl.at/adH38.
         '''
         pad = np.ones(len(a.shape), dtype=np.int32)
         pad[-1] = window-1
@@ -289,12 +288,12 @@ class UwbCalibrate(PostProcess):
 
         return range
 
-    def save_calib_results(self):
+    def save_calib_results(self, filename="calib_results.pickle"):
         calib_results = {
                         'delays': self.delays,
-                        'bias_spl': self.spl,
+                        'bias_spl': self.bias_spl,
                         'std_spl': self.std_spl,
                         }
 
-        with open("calib_results.pickle","wb") as file:
+        with open(filename,"wb") as file:
             pickle.dump(calib_results, file)
