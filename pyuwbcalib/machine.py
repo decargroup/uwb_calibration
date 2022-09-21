@@ -1,8 +1,19 @@
+from typing import Tuple
 from bagpy import bagreader
 import numpy as np
 import pandas as pd
 
 class Machine(object):
+    """_summary_
+
+    Attributes
+    ----------
+    object : _type_
+        _description_
+
+    Examples
+    --------
+    """
     def __init__(
         self,
         configs,
@@ -95,6 +106,16 @@ class Machine(object):
                          )
         
 class RosMachine(Machine):
+    """_summary_
+
+    Attributes
+    ----------
+    object : _type_
+        _description_
+
+    Examples
+    --------
+    """
     def __init__(
         self,
         configs,
@@ -126,7 +147,7 @@ class RosMachine(Machine):
         if not meas_at_target:
             self.drop_target_meas()
             
-    def _read_data(self) -> tuple(pd.DataFrame, pd.DataFrame):
+    def _read_data(self) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """_summary_
 
         Returns
@@ -166,6 +187,16 @@ class RosMachine(Machine):
         df.drop(columns=["header.stamp.secs", "header.stamp.nsecs"],inplace=True)
 
 class CsvMachine(Machine):
+    """_summary_
+
+    Attributes
+    ----------
+    object : _type_
+        _description_
+
+    Examples
+    --------
+    """
     def __init__(
         self,
         configs,

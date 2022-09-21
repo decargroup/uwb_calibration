@@ -1,5 +1,5 @@
+from typing import Tuple
 import numpy as np
-from traitlets import Undefined
 from .postprocess import PostProcess
 from scipy.interpolate import UnivariateSpline
 from scipy.optimize import least_squares
@@ -7,6 +7,16 @@ import pickle
 import pandas as pd
 
 class UwbCalibrate(PostProcess):
+    """_summary_
+
+    Attributes
+    ----------
+    object : _type_
+        _description_
+
+    Examples
+    --------
+    """
     """_summary_
 
     Parameters
@@ -21,12 +31,12 @@ class UwbCalibrate(PostProcess):
     """
     _c = 299702547  # speed of light
     _inherited = [
-                  'df',
-                  'machine_ids',
-                  'tag_ids',
-                  'ds_twr',
-                  'fpp_exists',
-                 ]
+        'df',
+        'machine_ids',
+        'tag_ids',
+        'ds_twr',
+        'fpp_exists',
+    ]
     
     def __init__(
         self, 
@@ -48,7 +58,8 @@ class UwbCalibrate(PostProcess):
         """
         Constructor
         Mention in the documentation somewhere that the range, bias, timestamps and intervals are updated
-        with the antenna-delay calibration results, but only the range and bias are updated with the 
+        with the antenna-delay calibration results (not tof and sums though), 
+        but only the range and bias are updated with the 
         power-calibration results. So the timestamps might need further processing if used alone.
         """
         self._data = data
@@ -58,7 +69,7 @@ class UwbCalibrate(PostProcess):
 
         self.lift = f_lift
 
-    def __getattr__(self, attr) -> Undefined:
+    def __getattr__(self, attr) -> object:
         """_summary_
 
         Parameters
@@ -118,7 +129,7 @@ class UwbCalibrate(PostProcess):
         r, 
         thresh, 
         window
-    ) -> tuple[int, int]:
+    ) -> Tuple[int, int]:
         """_summary_
 
         Parameters
@@ -132,7 +143,7 @@ class UwbCalibrate(PostProcess):
 
         Returns
         -------
-        tuple[int, int]
+        Tuple[int, int]
             _description_
         """
         rolling_mean = pd.DataFrame(r).rolling(window, center=True).mean()
@@ -412,7 +423,7 @@ class UwbCalibrate(PostProcess):
         lifted_pr, 
         bias, 
         thresh
-    ) -> tuple(np.ndarray, np.ndarray):
+    ) -> Tuple[np.ndarray, np.ndarray]:
         """_summary_
 
         Parameters

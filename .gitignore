@@ -18,3 +18,4 @@ pyuwbcalib/__init__.pyc
 .vscode
 calib_results.pickle
 data.pickle
+scripts/.ipynb_checkpoints

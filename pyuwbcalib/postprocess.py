@@ -2,40 +2,18 @@ import numpy as np
 import pandas as pd
 from pylie import SO3
 from scipy.interpolate import interp1d
-import pickle
-
-def save(obj, filename="data.pickle"):
-    """_summary_
-
-    Parameters
-    ----------
-    obj : _type_
-        _description_
-    filename : str, optional
-        _description_, by default "data.pickle"
-    """
-    with open(filename,"wb") as file:
-        pickle.dump(obj, file)
-
-def load(filename='data.pickle'):
-    """_summary_
-
-    Parameters
-    ----------
-    filename : str, optional
-        _description_, by default 'data.pickle'
-
-    Returns
-    -------
-    _type_
-        _description_
-    """
-    with open(filename, 'rb') as pickle_file:
-        data = pickle.load(pickle_file)
-        
-    return data
 
 class PostProcess(object):
+    """_summary_
+
+    Attributes
+    ----------
+    object : _type_
+        _description_
+
+    Examples
+    --------
+    """
     """
     Object to process ROS bags and extract the timestamps and data for UwbCalibrate.
 
