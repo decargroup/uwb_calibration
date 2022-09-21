@@ -16,3 +16,5 @@ figs
 doc
 pyuwbcalib/__init__.pyc
 .vscode
+calib_results.pickle
+data.pickle
