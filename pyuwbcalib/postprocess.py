@@ -5,10 +5,31 @@ from scipy.interpolate import interp1d
 import pickle
 
 def save(obj, filename="data.pickle"):
-        with open(filename,"wb") as file:
-            pickle.dump(obj, file)
+    """_summary_
+
+    Parameters
+    ----------
+    obj : _type_
+        _description_
+    filename : str, optional
+        _description_, by default "data.pickle"
+    """
+    with open(filename,"wb") as file:
+        pickle.dump(obj, file)
 
 def load(filename='data.pickle'):
+    """_summary_
+
+    Parameters
+    ----------
+    filename : str, optional
+        _description_, by default 'data.pickle'
+
+    Returns
+    -------
+    _type_
+        _description_
+    """
     with open(filename, 'rb') as pickle_file:
         data = pickle.load(pickle_file)
         
@@ -34,15 +55,42 @@ class PostProcess(object):
     """
     
     def __init__(
-                    self, 
-                    machines,
-                    merge_pairs = False,
-                ):
+        self, 
+        machines,
+        merge_pairs = False,
+    ) -> None:
+        """_summary_
+
+        Parameters
+        ----------
+        machines : _type_
+            _description_
+        merge_pairs : bool, optional
+            _description_, by default False
+        """
         self.merge_pairs = merge_pairs
         self._save_params(machines)    
         self._process_data(machines)
 
-    def _save_params(self, machines):
+    def _save_params(self, machines) -> None:
+        """_summary_
+
+        Parameters
+        ----------
+        machines : _type_
+            _description_
+
+        Raises
+        ------
+        Exception
+            _description_
+        Exception
+            _description_
+        Exception
+            _description_
+        Exception
+            _description_
+        """
         self.machine_ids = []
         self.tag_ids = {}
         self.moment_arms = {}
@@ -81,7 +129,14 @@ class PostProcess(object):
             if machines[machine].std_exists != self.std_exists:
                 self.std_exists = False
 
-    def _process_data(self, machines):
+    def _process_data(self, machines) -> None:
+        """_summary_
+
+        Parameters
+        ----------
+        machines : _type_
+            _description_
+        """
         self._store_uwb_data(machines)
         
         self._store_pose_data(machines)
@@ -96,14 +151,28 @@ class PostProcess(object):
             self.df['pair'] = self.df['pair'].apply(sorted)
             self.pair_list = list(self.df['pair'].unique())
 
-    def _store_uwb_data(self, machines):
+    def _store_uwb_data(self, machines) -> None:
+        """_summary_
+
+        Parameters
+        ----------
+        machines : _type_
+            _description_
+        """
         all_dfs = []
         for machine in machines:
             all_dfs = all_dfs + [machines[machine].df_uwb]
         self.df = pd.concat(all_dfs)
         self.df.reset_index(inplace=True, drop=True)
     
-    def _store_pose_data(self, machines):
+    def _store_pose_data(self, machines) -> None:
+        """_summary_
+
+        Parameters
+        ----------
+        machines : _type_
+            _description_
+        """
         t_new = self.df["time"]
         for machine in machines:
             t = np.array(machines[machine].df_pose['time'].to_list())
@@ -113,7 +182,7 @@ class PostProcess(object):
             self.df['r_iw_a_'+machine] = list(self._interpolate(r_iw_a, t, t_new))
             self.df['q_ai_'+machine] = list(self._interpolate(q_ai, t, t_new))
             
-    def _store_distance_data(self):
+    def _store_distance_data(self) -> None:
         self.df['gt_range'] = self.df.apply(
                                             self._compute_distance, 
                                             args=(self.tag_ids, self.moment_arms), 
@@ -126,7 +195,27 @@ class PostProcess(object):
         
         
     @staticmethod
-    def _compute_distance(row, tag_ids, moment_arms):
+    def _compute_distance(
+        row, 
+        tag_ids, 
+        moment_arms
+    ) -> float:
+        """_summary_
+
+        Parameters
+        ----------
+        row : _type_
+            _description_
+        tag_ids : _type_
+            _description_
+        moment_arms : _type_
+            _description_
+
+        Returns
+        -------
+        float
+            _description_
+        """
         id0 = row['from_id']
         id1 = row['to_id']
         
@@ -153,14 +242,30 @@ class PostProcess(object):
                              )
         
     @staticmethod 
-    def _get_bias(df):
+    def _get_bias(df) -> float:
+        """_summary_
+
+        Parameters
+        ----------
+        df : _type_
+            _description_
+
+        Returns
+        -------
+        float
+            _description_
+        """
         return df['range'] - df['gt_range']
 
-    def _get_pairs(self):
+    def _get_pairs(self) -> None:
+        """_summary_
+        """
         self.df['pair'] = tuple(zip(self.df.from_id, self.df.to_id))
         self.pair_list = list(self.df['pair'].unique())
     
-    def _compute_intervals(self):
+    def _compute_intervals(self) -> None:
+        """_summary_
+        """
         self.df["del_t1"] = self.df['rx2'] - self.df['tx1']
         self.df["del_t2"] = self.df['tx2'] - self.df['rx1']
         self.df["tof1"] = self.df['rx1'] - self.df['tx1']
@@ -174,7 +279,27 @@ class PostProcess(object):
             self.df["tof3"] = self.df['rx3'] - self.df['tx3']
 
     @staticmethod
-    def _interpolate(x, t_old, t_new):
+    def _interpolate(
+        x, 
+        t_old, 
+        t_new
+    ) -> np.ndarray:
+        """_summary_
+
+        Parameters
+        ----------
+        x : _type_
+            _description_
+        t_old : _type_
+            _description_
+        t_new : _type_
+            _description_
+
+        Returns
+        -------
+        np.ndarray
+            _description_
+        """
         """
         Interpolate ground truth position.
 
@@ -200,9 +325,8 @@ class PostProcess(object):
 
 
     ### -------------------------- UNWRAPPING METHODS -------------------------- ###
-    def _unwrap_all_clocks(self):
-        """
-        Unwrap the clock for all the time-stamp measurements.
+    def _unwrap_all_clocks(self) -> None:
+        """_summary_
         """
         # Timestamps are represented as uint32
         max_ts_ns = self.max_ts_value * self.ts_to_ns
@@ -254,7 +378,27 @@ class PostProcess(object):
             self.df[self.df['pair']==pair] = df_iter
 
     @staticmethod
-    def _unwrap(data, max, iter=0):
+    def _unwrap(
+        data, 
+        max, 
+        iter=0
+    ) -> np.ndarray:
+        """_summary_
+
+        Parameters
+        ----------
+        data : _type_
+            _description_
+        max : _type_
+            _description_
+        iter : int, optional
+            _description_, by default 0
+
+        Returns
+        -------
+        np.ndarray
+            _description_
+        """
         """
         Unwraps data. 
 
@@ -285,7 +429,25 @@ class PostProcess(object):
     ### ------------------------------------------------------------------------ ###
     
     ### -------------------------- GET PARAMS METHODS -------------------------- ###
-    def get_machine_pos(self, machine_id, as_numpy = False):
+    def get_machine_pos(
+        self, 
+        machine_id, 
+        as_numpy = False
+    ) -> np.ndarray:
+        """_summary_
+
+        Parameters
+        ----------
+        machine_id : _type_
+            _description_
+        as_numpy : bool, optional
+            _description_, by default False
+
+        Returns
+        -------
+        np.ndarray
+            _description_
+        """
         if as_numpy:
             return np.vstack(self.df['r_iw_a_' + machine_id])
         else:

@@ -1,14 +1,22 @@
 from bagpy import bagreader
-from matplotlib.image import interpolations_names
 import numpy as np
 import pandas as pd
 
 class Machine(object):
     def __init__(
-                    self,
-                    configs,
-                    id,
-                ):
+        self,
+        configs,
+        id,
+    ) -> None:
+        """_summary_
+
+        Parameters
+        ----------
+        configs : _type_
+            _description_
+        id : _type_
+            _description_
+        """
         
         self.max_ts_value = eval(configs['PARAMS']['max_ts_value'])
         self.ts_to_ns = eval(configs['PARAMS']['ts_to_ns'])
@@ -33,7 +41,14 @@ class Machine(object):
         self.uwb_topic = configs['UWB_TOPIC'][str(id)]
         self.uwb_fields = [configs['UWB_MESSAGE'][key] for key in configs['UWB_MESSAGE'].keys()]
         
-    def convert_uwb_timestamps(self, ts_to_ns):
+    def convert_uwb_timestamps(self, ts_to_ns) -> None:
+        """_summary_
+
+        Parameters
+        ----------
+        ts_to_ns : _type_
+            _description_
+        """
         self.df_uwb['tx1'] *= ts_to_ns
         self.df_uwb['rx1'] *= ts_to_ns
         self.df_uwb['tx2'] *= ts_to_ns
@@ -43,14 +58,18 @@ class Machine(object):
             self.df_uwb['tx3'] *= ts_to_ns
             self.df_uwb['rx3'] *= ts_to_ns
             
-    def drop_target_meas(self):
+    def drop_target_meas(self) -> None:
+        """_summary_
+        """
         bool1 = (self.df_uwb['from_id'] != self.tag_ids[0])
         bool2 = (self.df_uwb['from_id'] != self.tag_ids[1])
         
         self.df_uwb.drop(self.df_uwb[bool1 & bool2].index, inplace=True)
         self.df_uwb.reset_index(inplace=True, drop=True)
         
-    def merge_pose_data(self):
+    def merge_pose_data(self) -> None:
+        """_summary_
+        """
         self.df_pose['r_iw_a'] = list(np.array((
                                                 self.df_pose['pose.position.x'],
                                                 self.df_pose['pose.position.y'],
@@ -77,12 +96,25 @@ class Machine(object):
         
 class RosMachine(Machine):
     def __init__(
-                    self,
-                    configs,
-                    id,
-                    ts_to_ns = 1,
-                    meas_at_target = False,
-                ):
+        self,
+        configs,
+        id,
+        ts_to_ns = 1,
+        meas_at_target = False,
+    ) -> None:
+        """_summary_
+
+        Parameters
+        ----------
+        configs : _type_
+            _description_
+        id : _type_
+            _description_
+        ts_to_ns : int, optional
+            _description_, by default 1
+        meas_at_target : bool, optional
+            _description_, by default False
+        """
         super().__init__(configs, id)
 
         self.df_pose, self.df_uwb = self._read_data()
@@ -94,7 +126,14 @@ class RosMachine(Machine):
         if not meas_at_target:
             self.drop_target_meas()
             
-    def _read_data(self):
+    def _read_data(self) -> tuple(pd.DataFrame, pd.DataFrame):
+        """_summary_
+
+        Returns
+        -------
+        _type_
+            _description_
+        """
         # Pose data 
         bag = bagreader(self.pose_path)
         pose_data = bag.message_by_topic(self.pose_topic)
@@ -107,24 +146,46 @@ class RosMachine(Machine):
         
         return df_pose, df_uwb
         
-    def _process_ros_timestamps(self):
+    def _process_ros_timestamps(self) -> None:
+        """_summary_
+        """
         self._merge_timestamp_headers(self.df_pose)
         self._merge_timestamp_headers(self.df_uwb)
         
     @staticmethod
-    def _merge_timestamp_headers(df):
+    def _merge_timestamp_headers(df) -> None:
+        """_summary_
+
+        Parameters
+        ----------
+        df : _type_
+            _description_
+        """
         df.drop(columns=["Time"],inplace=True)
         df['time'] = df["header.stamp.secs"] + df["header.stamp.nsecs"]/1e9
         df.drop(columns=["header.stamp.secs", "header.stamp.nsecs"],inplace=True)
 
 class CsvMachine(Machine):
     def __init__(
-                    self,
-                    configs,
-                    id,
-                    ts_to_ns = 1,
-                    meas_at_target=False,
-                ):
+        self,
+        configs,
+        id,
+        ts_to_ns = 1,
+        meas_at_target=False,
+    ) -> None:
+        """_summary_
+
+        Parameters
+        ----------
+        configs : _type_
+            _description_
+        id : _type_
+            _description_
+        ts_to_ns : int, optional
+            _description_, by default 1
+        meas_at_target : bool, optional
+            _description_, by default False
+        """
         super().__init__(configs,
                          id,
                          ts_to_ns,
@@ -138,6 +199,13 @@ class CsvMachine(Machine):
         if not meas_at_target:
             self.drop_target_meas()
         
-    def _read_data(self):
+    def _read_data(self) -> None:
+        """_summary_
+
+        Raises
+        ------
+        Exception
+            _description_
+        """
         # TODO: implement reading data from csv files. 
         raise Exception("To be implemented.")
