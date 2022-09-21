@@ -1,6 +1,6 @@
 # %%
 from pyuwbcalib.postprocess import PostProcess
-from pyuwbcalib.computecorrectedrange import ComputeCorrectedRange
+from deprecated.computecorrectedrange import ComputeCorrectedRange
 from scipy.interpolate import interp1d, BSpline
 from pyuwbcalib.uwbcalibrate import UwbCalibrate
 from sklearn.ensemble import RandomForestClassifier

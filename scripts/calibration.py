@@ -23,7 +23,6 @@ plt.rc('legend', facecolor=[1,1,1])
 plt.rc('legend', fontsize=30)
 plt.rcParams['figure.constrained_layout.use'] = True
 
-c = 299702547
 data = load()
 
 calib = UwbCalibrate(data, rm_static=True)
