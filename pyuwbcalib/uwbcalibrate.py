@@ -1,8 +1,6 @@
 import numpy as np
 from traitlets import Undefined
 from .postprocess import PostProcess
-from numpy.linalg import inv
-import matplotlib.pyplot as plt
 from scipy.interpolate import UnivariateSpline
 from scipy.optimize import least_squares
 import pickle
