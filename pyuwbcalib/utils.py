@@ -1,35 +1,34 @@
-# Move interpolate function from postprocess to here
-# SAME with unwrapping methods
-# Move "find machine from tag" from postprocess to here
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pickle
+import numpy as np
+from scipy.interpolate import interp1d
 
 def save(obj, filename="file.pickle") -> None:
-    """_summary_
+    """Save object using pickle.
 
     Parameters
     ----------
-    obj : _type_
-        _description_
+    obj : object
+        Any object to be saved.
     filename : str, optional
-        _description_, by default "file.pickle"
+        Name of pickle file, by default "file.pickle"
     """
     with open(filename, "wb") as file:
         pickle.dump(obj, file)
 
 def load(filename='file.pickle') -> object:
-    """_summary_
+    """Load an object using pickle.
 
     Parameters
     ----------
     filename : str, optional
-        _description_, by default 'file.pickle'
+        Name of pickle file, by default 'file.pickle'
 
     Returns
     -------
-    _type_
-        _description_
+    object
+        The loaded object.
     """
     with open(filename, 'rb') as pickle_file:
         data = pickle.load(pickle_file)
@@ -37,7 +36,7 @@ def load(filename='file.pickle') -> object:
     return data
 
 def set_plotting_env() -> None:
-    """_summary_
+    """Set the plotting environment
     """
     sns.set_palette("colorblind")
     sns.set_style('whitegrid')
@@ -52,3 +51,28 @@ def set_plotting_env() -> None:
     plt.rc('legend', facecolor=[1,1,1])
     plt.rc('legend', fontsize=30)
     plt.rcParams['figure.constrained_layout.use'] = True
+
+def interpolate(
+        x, 
+        t_old, 
+        t_new
+    ) -> np.ndarray:
+        """Interpolate data from old timestamps to new timestamps.
+
+        Parameters
+        ----------
+        x : np.ndarray
+            Data to be interpolated.
+        t_old : np.ndarray
+            The old timestamps.
+        t_new : _type_
+            The new timestamps.
+
+        Returns
+        -------
+        np.ndarray
+            Interpolated data.
+        """
+        f = interp1d(t_old, x, kind='linear', fill_value='extrapolate', axis=0)
+
+        return f(t_new)

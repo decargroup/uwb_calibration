@@ -30,7 +30,7 @@ class Machine(object):
         The path of the file containing the UWB data.
     machine_id: str
         The ID of the machine.
-    tag_ids: list
+    tag_ids: list of int
         The ID of the tags installed on this machine.
     moment_arms: dict
         keys: int
@@ -42,7 +42,7 @@ class Machine(object):
         ROS ONLY. The topic name for the ground truth pose. 
     uwb_topic: str
         ROS ONLY. The topic name for the UWB topic.
-    uwb_fields: list
+    uwb_fields: list of str
         Fieldnames representing the fields collected through UWB.
     """
     def __init__(
@@ -51,7 +51,7 @@ class Machine(object):
         id,
         is_ros = True,
     ) -> None:
-        """_summary_
+        """Constructor
 
         Parameters
         ----------
@@ -111,7 +111,7 @@ class Machine(object):
         this function removes measurements at the targetted tag to avoid duplicates.
         """
         # Check if the initiating tag is not on this machine
-        bool = (self.df_uwb['from_id'] not in self.tag_ids)
+        bool = [id not in self.tag_ids for id in self.df_uwb['from_id']]
         
         # Drop all rows that do satisfy the above condition
         self.df_uwb.drop(self.df_uwb[bool].index, inplace=True)
@@ -236,7 +236,7 @@ class RosMachine(Machine):
         id,
         meas_at_target = False,
     ) -> None:
-        """_summary_
+        """Constructor
 
         Parameters
         ----------

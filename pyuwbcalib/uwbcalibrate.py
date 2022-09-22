@@ -7,29 +7,43 @@ import pickle
 import pandas as pd
 
 class UwbCalibrate(PostProcess):
-    """_summary_
+    """A class to handle calibration of the UWB modules. 
+
+    This class inherits attributes from a PostProcess object. The attributes to be inherited
+    are specified in the attribute _inherited.    
 
     Attributes
     ----------
-    object : _type_
-        _description_
+    lift: function
+        The lifting function for power measurements.
+    delays: dict
+        Only exists after calib_antennas() is called.
+        keys: int
+            The ID of the tag.
+        values: float
+            The estimated antenna-delay for this tag.
+    bias_spl: UnivariateSpline
+        The learnt "bias vs. lifted power" spline.
+        Only exists after fit_power_model() is called.
+    std_spl: _type_
+        The learnt "standard deviation vs. lifted power" spline.
+        Only exists after fit_power_model() is called.
 
     Examples
     --------
-    """
-    """_summary_
+    # Let the variable 'data' be a PostProces object.
+    calib = UwbCalibrate(data, rm_static=True)
 
-    Parameters
-    ----------
-    PostProcess : _type_
-        _description_
+    # Calibrate antenna delays
+    calib.calibrate_antennas()
 
-    Returns
-    -------
-    _type_
-        _description_
+    # Correct power-correlated bias
+    calib.fit_power_model()
     """
-    _c = 299702547  # speed of light
+    # Speed of light
+    _c = 299702547 
+
+    # Attributes to be inherited from the PostProcess object
     _inherited = [
         'df',
         'machine_ids',
@@ -44,23 +58,18 @@ class UwbCalibrate(PostProcess):
         rm_static = False, 
         f_lift = lambda x: 10**((x + 82)/10),
     ) -> None:
-        """_summary_
+        """Constructor
 
         Parameters
         ----------
-        data : _type_
-            _description_
-        rm_static : bool, optional
-            _description_, by default False
-        f_lift : _type_, optional
-            _description_, by default lambdax:10**((x + 82)/10)
-        """
-        """
-        Constructor
-        Mention in the documentation somewhere that the range, bias, timestamps and intervals are updated
-        with the antenna-delay calibration results (not tof and sums though), 
-        but only the range and bias are updated with the 
-        power-calibration results. So the timestamps might need further processing if used alone.
+        data: PostProcess
+            Processed data to be calibrated.
+        rm_static: bool, optional
+            Remove static regions at the beginning and end of experiments, 
+            by default False
+        f_lift: function, optional
+            The lifting function for power measurements for better fitting, 
+            by default lambda(x): 10 ** ( (x + 82) / 10 )
         """
         self._data = data
         
@@ -70,89 +79,108 @@ class UwbCalibrate(PostProcess):
         self.lift = f_lift
 
     def __getattr__(self, attr) -> object:
-        """_summary_
+        """Inherit missing self._inherited attributes from PostProcess object.
 
         Parameters
         ----------
-        attr : _type_
-            _description_
+        attr: object
+            Name of the attribute.
 
         Returns
         -------
-        _type_
-            _description_
+        object
+            The retrieved attribute value from the PostProcess object.
+
+        Raises
+        ------
+        Exception
+            Could not find the attribute: *attr
         """
         if attr in self._inherited:
             return getattr(self._data, attr)
+        else: 
+            Exception(r"Could not find the attribute: " + attr)
 
     def _remove_static_regions(self) -> None:
-        """_summary_
+        """Remove the static region in the extremes.
         """
-        '''
-        Remove the static region in the extremes.
-        TODO: extensively test this with a few datasets.
-        '''        
+        # Threshold for motion detection, in metres
         thresh = 0.1
-        window = 10 # size of windows
+
+        # Window size to compare measurements 
+        window = 10 
         
         lower_idx = 0
         upper_idx = np.Inf
 
+        # Iterate machine by machine
         for machine_i in self.machine_ids:
+            # Get the position of the machine
             r_iw_a = self.get_machine_pos(machine_i, as_numpy = True)
             
-            # Lower bound
+            # Split the position into its dimensions
             x = r_iw_a[:,0]
             y = r_iw_a[:,1]
             z = r_iw_a[:,2]
             
+            # Get the lower and upper indices associated with static regions
+            # in the extremes
             x_lower, x_upper = self._find_static_extremes(x, thresh, window)
             y_lower, y_upper = self._find_static_extremes(y, thresh, window)
             z_lower, z_upper = self._find_static_extremes(z, thresh, window)
             
+            # Find first index associated with the robot not moving in any direction
             lowest_low_idx = np.min([x_lower, y_lower, z_lower])
             highest_upper_idx = np.max([x_upper, y_upper, z_upper])
             
+            # Check if this robot was static for longer than others
             if lowest_low_idx > lower_idx:
                 lower_idx = lowest_low_idx
-            
             if highest_upper_idx < upper_idx:
                 upper_idx = highest_upper_idx
-            
+        
+        # Drop measurements when one or more robots are static
         n = len(self.df)
         self.df.drop(np.linspace(0,lower_idx,lower_idx+1), inplace=True)
         self.df.drop(np.linspace(upper_idx, n-1, n-upper_idx), inplace=True)
-        # self.df.reset_index(inplace=True, drop=True)
         
     @staticmethod
     def _find_static_extremes(
-        r, 
-        thresh, 
+        r,
+        thresh,
         window
     ) -> Tuple[int, int]:
         """_summary_
 
         Parameters
         ----------
-        r : _type_
-            _description_
-        thresh : _type_
-            _description_
-        window : _type_
-            _description_
+        r: np.ndarray
+            The position measurements in one dimension.
+        thresh: float
+            Threshold for motion detection, in metres
+        window: int
+            # Window size to compare measurements 
 
         Returns
         -------
         Tuple[int, int]
-            _description_
+            lower_idx: The lower index associated with the time the robot started 
+                moving in this direction.
+            upper_idx: The upper index associated with the time the robot stopped 
+                moving in this direction.
         """
+        # Get the rolling mean based on the window size
         rolling_mean = pd.DataFrame(r).rolling(window, center=True).mean()
+        
+        # Fill extremes
         rolling_mean = rolling_mean.fillna(method="bfill").fillna(method="ffill")
         rolling_mean = np.array(rolling_mean)
         
+        # Find the deltas in the motion.
         diff_lower = np.abs(rolling_mean[1:] - rolling_mean[0])
         diff_upper = np.abs(np.flip(rolling_mean)[1:] - rolling_mean[-1])
         
+        # Get the indices associated with changes greater than the threshold
         lower_idx = np.argmax(diff_lower>thresh)
         upper_idx = len(diff_lower) - np.argmax(np.flip(diff_upper)>thresh) - 1
         
@@ -163,91 +191,96 @@ class UwbCalibrate(PostProcess):
         loss='cauchy', 
         tx_rx_split={'tx':0.6, 'rx':0.4},
     ) -> None:
-        """_summary_
+        """Estimate the antenna delays for the UWB tags, and correct the corresponding timestamps.
+
+        This corrects the following fields in self.df:
+            ['range', 
+             'bias', 
+             'tx1', 
+             'rx1', 
+             'tx2', 
+             'rx2', 
+             'tx3', 
+             'rx3', 
+             'del_t1', 
+             'del_t2']
+
+        TODO: The following fields remain uncorrected (to use tx_rx_split):
+            ['tof1', 
+             'tof2',
+             'tof3',
+             'sum_t1',
+             'sum_t2']
 
         Parameters
         ----------
-        loss : str, optional
-            _description_, by default 'cauchy'
-        tx_rx_split : dict, optional
-            _description_, by default {'tx':0.6, 'rx':0.4}
+        loss: str, optional
+            Loss function to be used in scipy.interpolate.least_squares, by default 'cauchy'
+        tx_rx_split: dict, optional
+            Splitting the calibrated delay between transmission and reception delay, 
+            by default {'tx':0.6, 'rx':0.4} based on 
+            "Decawave (2018), APS014: DW1000 Antenna Delay Calibration Version 1.2. 1.15."
         """
-        """
-        Calibrate the antenna delays by formulating and solving a linear least-squares problem.
-
-        RETURNS:
-        --------
-        dict: Dictionary with 3 fields each for tag z \in {i,j,k}
-            Module i: (float)
-                Antenna delay for tag i
-        """
+        # Get IDs of all tags
         tags = list(np.concatenate(list(self.tag_ids.values())).flat)
         n = len(self.df)
         
+        # Find the indices associated with the ranging tags for every measurement
         from_idx = [tags.index(x) for x in np.array(self.df["from_id"])]
         to_idx = [tags.index(x) for x in np.array(self.df["to_id"])]
         rows = np.linspace(0,n-1,n).astype(int)
         
+        # Compute the clock-skew gain, if using DS-TWR
         if self.ds_twr:
             K = self.df["del_t3"] / self.df["del_t4"]
         else:
             K = 1
         
+        # Compute the A matrix
         A = np.zeros((n,len(tags)))
         A[rows, from_idx] += 0.5
         A[rows, to_idx] += 0.5 * K
         
+        # Compute the b column matrix
         b = 1 / self._c * self.df["gt_range"] * 1e9 \
             - 0.5 * self.df["del_t1"] \
             + 0.5 * K * self.df["del_t2"]
         b = np.array(b)
 
+        # Solve for the delays
         x = self._solve_for_antenna_delays(A, b, loss)['x']
         x = x.flatten()
 
+        # Separate the delays per tag
         self.delays = {id: x[i] for i,id in enumerate(tags)}
         
+        # Correct the stored range measurements and timestamps
         self._correct_antenna_delays(tx_rx_split)
 
     def _correct_antenna_delays(self, tx_rx_split) -> None:
-        """_summary_
+        """Correct the stored range measurements and timestamps by utilizing the
+        estimated tag-dependent antenna delays.
 
         Parameters
         ----------
-        tx_rx_split : _type_
-            _description_
+        tx_rx_split: dict
+            The split of the calibrated delay between transmission and reception delay.
         """
-        """
-        Modifies the data of this object to correct for the antenna delay of a
-        specific module.
-
-        Mention that individual timestamps is based on Decawave's split of 60 40.
-
-        PARAMETERS:
-        -----------
-        id: int
-            Module ID whose antenna delay is to be corrected.
-        delay: float
-            The amount of antenna delay, in nanoseconds.
-
-        TODO: What about D1 and D2? This seems to be a problem.
-              We might have to calibrate for TX and RX delays separately
-              if we are to proceed with Kalman filtering with this architecture.
-        TODO: tof1, tof2, and tof3 as well, once individual delays are taken into consideration.
-        TODO: access delays from self object
-        """
-        
+        # Find the delays associated with the ranging tags for every measurement
         from_delay = np.array([self.delays[x] for x in np.array(self.df["from_id"])])
         to_delay = np.array([self.delays[x] for x in np.array(self.df["to_id"])])
         
+        # Correct the intervals
         self.df["del_t1"] += from_delay
         self.df["del_t2"] -= to_delay
         
+        # Compute the individual delays
         tx_from_delay = tx_rx_split['tx'] * from_delay
         rx_from_delay = tx_rx_split['rx'] * from_delay
         tx_to_delay = tx_rx_split['tx'] * to_delay
         rx_to_delay = tx_rx_split['rx'] * to_delay
 
+        # Correct the individual timestamps
         self.df["tx1"] = -tx_from_delay
         self.df["rx2"] = rx_from_delay
 
@@ -258,11 +291,12 @@ class UwbCalibrate(PostProcess):
             self.df["tx3"] = -tx_to_delay
             self.df["rx3"] = rx_to_delay
 
+        # Correct the range measurements and bias
         self.df['range'] = self.compute_range_meas()
         self.df['bias'] = self.df.apply(
-                                        self._get_bias, 
-                                        axis=1
-                                       )
+            self._get_bias, 
+            axis=1
+        )
 
     def _solve_for_antenna_delays(
         self, 
@@ -270,103 +304,69 @@ class UwbCalibrate(PostProcess):
         b, 
         loss
     ) -> dict:
-        """_summary_
+        """Solve the antenna-delay robust-least-squares problem.
 
         Parameters
         ----------
-        A : _type_
-            _description_
-        b : _type_
-            _description_
-        loss : _type_
-            _description_
-
-        Returns
-        -------
-        dict
-            _description_
-        """
-        """
-        Solves the linear least-squares problem.
-
-        PARAMETERS:
-        -----------
-        A: 2D np.array
-            The A matrix.
-        b: np.array
-            The b vector.
-
-        RETURNS:
-        --------
-        np.array: The solution to the Ax=b problem.
-        """
-        n = A.shape[1]
-        return least_squares(self._cost_func, np.zeros(n), loss=loss, f_scale=0.1, args=(A,b.T))
-
-    @staticmethod
-    def _cost_func(x, A, b) -> np.ndarray:
-        """_summary_
-
-        Parameters
-        ----------
-        x : _type_
-            _description_
-        A : _type_
-            _description_
-        b : _type_
-            _description_
+        A: np.ndarray
+            The A matrix in the Ax=b linear system.
+        b: np.ndarray
+            The b column matrix in the Ax=b linear system.
+        loss: str
+            Loss function to be used in scipy.interpolate.least_squares.
 
         Returns
         -------
         np.ndarray
-            _description_
+            The solution to x in the Ax=b linear system, using robust least squares.
+        """
+        n = A.shape[1]
+        return least_squares(
+            self._cost_func, 
+            np.zeros(n), 
+            loss=loss, 
+            f_scale=0.1, 
+            args=(A,b.T)
+        )
+
+    @staticmethod
+    def _cost_func(x, A, b) -> np.ndarray:
+        """The cost function used in the least squares problem.
+
+        Parameters
+        ----------
+        x: np.ndarray 
+            The unknowns to be solved for; in other words, the x column matrix 
+            in the Ax=b linear system.
+        A: np.ndarray
+            The A matrix in the Ax=b linear system.
+        b: np.ndarray
+            The b column matrix in the Ax=b linear system.
+
+        Returns
+        -------
+        np.ndarray
+            The evaluated cost.
         """
         return (A@x - b).reshape(-1,)
 
     @staticmethod
-    def _rolling_window(a, window) -> np.ndarray:
-        """_summary_
-
-        Parameters
-        ----------
-        a : _type_
-            _description_
-        window : _type_
-            _description_
-
-        Returns
-        -------
-        _type_
-            _description_
-        """
-        '''
-        Copied from shorturl.at/adH38.
-        '''
-        pad = np.ones(len(a.shape), dtype=np.int32)
-        pad[-1] = window-1
-        pad = list(zip(pad, np.zeros(len(a.shape), dtype=np.int32)))
-        a = np.pad(a, pad,mode='reflect')
-        shape = a.shape[:-1] + (a.shape[-1] - window + 1, window)
-        strides = a.strides + (a.strides[-1],)
-        return np.lib.stride_tricks.as_strided(a, shape=shape, strides=strides)
-
-    @staticmethod
     def get_avg_lifted_pr(pr1, pr2, f) -> float:
-        """_summary_
+        """Get the average of the lifted powers. 
 
         Parameters
         ----------
-        pr1 : _type_
-            _description_
-        pr2 : _type_
-            _description_
-        f : _type_
-            _description_
+        pr1: np.ndarray
+            The first power value to be lifted.
+        pr2: np.ndarray
+            The second power value to be lifted.
+        f: _type_
+            The lifting function.
 
         Returns
         -------
         float
-            _description_
+            Average lifted power.
         """
         return 0.5 * (f(pr1) + f(pr2))
 
@@ -375,24 +375,58 @@ class UwbCalibrate(PostProcess):
         std_window=25,
         thresh={'bias': 0.3, 'std': 3}
     ) -> None:
-        """_summary_
+        """Fit the bias vs power and standard deviation vs power splines, and 
+        correct the range measurements.
+
+        This adds a new column with header 'std' to the main dataframe, 
+        representing the standard deviation of the measurement based on the 
+        received first-path power and the calibration results. 
+
+        This corrects the following fields in self.df:
+            ['range', 
+             'bias']
+
+        TODO: The following fields remain uncorrected:
+            ['tx1', 
+             'rx1', 
+             'tx2', 
+             'rx2', 
+             'tx3', 
+             'rx3', 
+             'del_t1',
+             'del_t2',
+             'tof1',
+             'tof2',
+             'tof3',
+             'sum_t1',
+             'sum_t2']
 
         Parameters
         ----------
-        std_window : int, optional
-            _description_, by default 25
-        thresh : dict, optional
-            _description_, by default {'bias': 0.3, 'std': 3}
+        std_window: int, optional
+            The window size of measurements for computing the standard deviations, 
+            by default 25
+        thresh: dict, optional
+            The bias thresholds for outlier rejection.
+            keys: str
+                The type of calibration.
+            values: float
+                The threshold used for this type of power-correlated calibration.
+            by default {'bias': 0.3, 'std': 3}
         """
-        bias = np.array(self.df['bias'])
-        pr1 = np.array(self.df['fpp1'])
-        pr2 = np.array(self.df['fpp2'])
-        lifted_pr = self.get_avg_lifted_pr(pr1, pr2, self.lift)
+        # Get the average lifted power
+        lifted_pr = self.get_avg_lifted_pr(
+            np.array(self.df['fpp1']), 
+            np.array(self.df['fpp2']), 
+            self.lift
+        )
 
+        # Sort the bias and power data based on the power data
         sort_pr = np.argsort(lifted_pr)
-        bias = bias[sort_pr]
+        bias = np.array(self.df['bias'])[sort_pr]
         lifted_pr = lifted_pr[sort_pr]
 
+        # Bias vs. FPP: Remove outliers and fit a spline
         lifted_pr_inl, bias_inl = \
                 self.remove_outliers(lifted_pr, 
                                      bias, 
@@ -400,17 +434,21 @@ class UwbCalibrate(PostProcess):
         self.bias_spl = self.fit_spline(lifted_pr_inl, 
                                         bias_inl)
 
+        # Standard deviation vs. FPP: Remove outliers and fit a spline
         lifted_pr_inl, bias_inl = \
                 self.remove_outliers(lifted_pr, 
                                      bias, 
                                      thresh['std'])
-        std = self.get_rolling_std(bias_inl,
-                                   std_window)
+        std = pd.DataFrame(bias_inl).rolling(std_window).std()
+        std = std.fillna(method="bfill").fillna(method="ffill").to_numpy()
         self.std_spl = self.fit_spline(lifted_pr_inl, 
                                        std,
                                        k=4)
 
-        lifted_pr_unsorted = lifted_pr[np.argsort(sort_pr)] # undo sort
+        # Undo sort
+        lifted_pr_unsorted = lifted_pr[np.argsort(sort_pr)]
+
+        # Update the main dataframe with the calibration results
         self.df['std'] = self.std_spl(lifted_pr_unsorted)
         self.df['range'] -= self.bias_spl(lifted_pr_unsorted)
         self.df['bias'] = self.df.apply(
@@ -420,84 +458,73 @@ class UwbCalibrate(PostProcess):
 
     @staticmethod
     def remove_outliers(
-        lifted_pr, 
-        bias, 
+        x, 
+        y, 
         thresh
     ) -> Tuple[np.ndarray, np.ndarray]:
-        """_summary_
+        """Remove outliers by fitting a spline through the data and 
+        removing datapoints that are further from the spline than the
+        threshold.
 
         Parameters
         ----------
-        lifted_pr : _type_
-            _description_
-        np : _type_
-            _description_
+        x : np.ndarray
+            Independent input data.
+        y : np.ndarray
+            Dependent input data.
+        thresh : float
+            Threshold for rejecting outliers.
 
         Returns
         -------
-        _type_
-            _description_
+        Tuple[np.ndarray, np.ndarray]
+            x: np.ndarray
+                Independent input data inliers.
+            y: np.ndarray
+                Dependent input data inliers.
         """
-        spl = UnivariateSpline(lifted_pr, bias, k=3)
-        bias_fit = spl(lifted_pr)
-        inliers_idx = np.abs(bias - bias_fit) <= thresh
-        return lifted_pr[inliers_idx], bias[inliers_idx]
+        # Fit spline
+        spl = UnivariateSpline(x, y, k=3)
+        y_fit = spl(x)
+
+        # Find index of datapoints within a threshold away from the fit.
+        inliers_idx = np.abs(y - y_fit) <= thresh
+
+        return x[inliers_idx], y[inliers_idx]
 
     @staticmethod
     def fit_spline(
-        lifted_pr, 
-        bias, 
+        x, 
+        y, 
         k=3
     ) -> UnivariateSpline:
-        """_summary_
+        """Fit a UnivariateSpline to the data.
 
         Parameters
         ----------
-        lifted_pr : _type_
-            _description_
-        bias : _type_
-            _description_
-        k : int, optional
-            _description_, by default 3
+        x : np.ndarray
+            Independent input data.
+        y : np.ndarray
+            Dependent input data.
+        k: int, optional
+            Degree of the smoothing spline, by default 3
 
         Returns
         -------
         UnivariateSpline
-            _description_
+            The fitted spline.
         """
-        return UnivariateSpline(lifted_pr, 
-                                bias, 
+        return UnivariateSpline(x, 
+                                y, 
                                 k=k)
 
-    def get_rolling_std(
-        self, 
-        bias, 
-        std_window
-    ) -> np.ndarray:
-        """_summary_
-
-        Parameters
-        ----------
-        bias : _type_
-            _description_
-        std_window : _type_
-            _description_
-
-        Returns
-        -------
-        np.ndarray
-            _description_
-        """
-        windows = self._rolling_window(bias.ravel(), std_window)
-        return np.std(windows - np.mean(windows).reshape(-1,1), axis=-1)
-
     def compute_range_meas(self) -> np.ndarray:
-        """_summary_
+        """Compute the range measurement based on the timestamp intervals.
 
         Returns
         -------
         np.ndarray
-            _description_
+            Range measurements.
         """
         del_t1 = self.df['del_t1']
         del_t2 = self.df['del_t2']
@@ -516,12 +543,12 @@ class UwbCalibrate(PostProcess):
         self, 
         filename="calib_results.pickle"
     ) -> None:
-        """_summary_
+        """Save the calibration results.
 
         Parameters
         ----------
-        filename : str, optional
-            _description_, by default "calib_results.pickle"
+        filename: str, optional
+            The name of the pickle file, by default "calib_results.pickle"
         """
         calib_results = {
             'delays': self.delays,
