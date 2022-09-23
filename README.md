@@ -30,19 +30,19 @@ data = PostProcess(machines)
 # Instantiate a UwbCalibrate object, and remove static extremes
 calib = UwbCalibrate(data, rm_static=True)
 
-# Compute the raw bias measurements
+# Extract the raw bias measurements
 bias_raw = np.array(calib.df['bias'])
 
 # Correct antenna delays
 calib.calibrate_antennas()
 
-# Compute the antenna-delay-corrected measurements
+# Extract the antenna-delay-corrected measurements
 bias_antenna_delay = np.array(calib.df['bias'])
 
 # Correct power-correlated bias
 calib.fit_power_model()
 
-# Compute the fully-calibrated measurements
+# Extract the fully-calibrated measurements
 bias_fully_calib = np.array(calib.df['bias'])
 ```
 
