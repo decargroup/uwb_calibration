@@ -2,7 +2,7 @@
 
 **This package is still in development. Any contribution is welcome!**
 
-The purpose of this Python package is to calibrate the UWB modules in order to improve ranging accuracy.
+A Python package to calibrate the UWB modules in order to improve ranging accuracy.
 
 ## Example
 
