@@ -11,19 +11,21 @@ matplotlib.use('Qt5Agg')
 
 sns.set_theme()
 
-bias_thresh = 0.5
+bias_thresh = 0.25
 
 tag_ids={'ifo001': [1,2],
          'ifo002': [3,4],
          'ifo003': [5,6]}
-moment_arms={'ifo001': [[0.15846,-0.16067,-0.07762], [-0.19711,0.14649,-0.082706]],
-             'ifo002': [[0.18620,-0.13653,-0.05268], [-0.16133,0.17290,-0.047776]],
-             'ifo003': [[0.18776,-0.16791,-0.08407], [-0.15605,0.14864,-0.079526]]}
-raw_obj = PostProcess("datasets/2022_07_07/08/merged.bag",
+# moment_arms={'ifo001': [[0.15846,-0.16067,-0.07762], [-0.19711,0.14649,-0.082706]],
+#              'ifo002': [[0.18620,-0.13653,-0.05268], [-0.16133,0.17290,-0.047776]],
+#              'ifo003': [[0.18776,-0.16791,-0.08407], [-0.15605,0.14864,-0.079526]]}
+moment_arms={'ifo001': [[0.13189,-0.17245,-0.05249], [-0.17542,0.15712,-0.05307]],
+             'ifo002': [[0.16544,-0.15085,-0.03456], [-0.15467,0.16972,-0.01680]],
+             'ifo003': [[0.16685,-0.18113,-0.05576], [-0.13485,0.15468,-0.05164]]}
+raw_obj = PostProcess("datasets/2022_08_03/bias_calibration_new2/merged.bag",
                       tag_ids,
                       moment_arms,
                       num_meas=-1)
-
 
 # plt.show(block=True)
 
@@ -93,18 +95,21 @@ for pair_i in calib_obj.tag_pairs:
     undetected_outliers['avg_std'] = np.concatenate([undetected_outliers['avg_std'], avg_std[undetected_outliers_idx]])
     undetected_outliers['bias'] = np.concatenate([undetected_outliers['bias'], (meas_new[pair_i]-gt)[undetected_outliers_idx]])
 
-# fig, axs = plt.subplots(3,1)
-# axs[0].set_title(r'Probability Density Function for different Metrics', size=20)
-# axs[0].hist(inliers['lifted_rxp'],np.linspace(1.25,3,100),alpha=0.5,density=True, label=r'Inliers')
-# axs[0].hist(undetected_outliers['lifted_rxp'],np.linspace(1.25,3,100),alpha=0.5,density=True, label=r'Outliers')
-# axs[0].set_xlabel(r'$f(P_r)$')
-# axs[0].legend(loc='upper right')
-# axs[1].hist(inliers['lifted_pr'],np.linspace(0,2,100),alpha=0.5,density=True)
-# axs[1].hist(undetected_outliers['lifted_pr'],np.linspace(0,2,100),alpha=0.5,density=True)
-# axs[1].set_xlabel(r'$f(P_f)$')
-# axs[2].hist(inliers['avg_rxp'] - inliers['avg_fpp'],np.linspace(0,15,100),alpha=0.5,density=True)
-# axs[2].hist(undetected_outliers['avg_rxp'] - undetected_outliers['avg_fpp'],np.linspace(0,15,100),alpha=0.5,density=True)
-# axs[2].set_xlabel(r'$P_r - P_f [dB]$')
+fig, axs = plt.subplots(4,1)
+axs[0].set_title(r'Probability Density Function for different Metrics', size=20)
+axs[0].hist(inliers['lifted_rxp'],np.linspace(1.25,3,100),alpha=0.5,density=True, label=r'Inliers')
+axs[0].hist(undetected_outliers['lifted_rxp'],np.linspace(1.25,3,100),alpha=0.5,density=True, label=r'Outliers')
+axs[0].set_xlabel(r'$f(P_r)$')
+axs[0].legend(loc='upper right')
+axs[1].hist(inliers['lifted_pr'],np.linspace(0,2,100),alpha=0.5,density=True)
+axs[1].hist(undetected_outliers['lifted_pr'],np.linspace(0,2,100),alpha=0.5,density=True)
+axs[1].set_xlabel(r'$f(P_f)$')
+axs[2].hist(inliers['avg_rxp'] - inliers['avg_fpp'],np.linspace(0,15,100),alpha=0.5,density=True)
+axs[2].hist(undetected_outliers['avg_rxp'] - undetected_outliers['avg_fpp'],np.linspace(0,15,100),alpha=0.5,density=True)
+axs[2].set_xlabel(r'$P_r - P_f [dB]$')
+axs[3].hist(inliers['avg_std'],np.linspace(0,100,100),alpha=0.5,density=True)
+axs[3].hist(undetected_outliers['avg_std'],np.linspace(0,100,100),alpha=0.5,density=True)
+axs[3].set_xlabel(r'$P_r - P_f [dB]$')
 
 print('Inliers: ' + str(np.size(inliers['gt'])))
 print('Undetected outliers: ' + str(np.size(undetected_outliers['gt'])))
@@ -124,15 +129,15 @@ y1 = np.zeros((X1.shape[1]))
 y2 = np.ones((X2.shape[1]))
 y = np.hstack((y1,y2)) 
 
-clf = RandomForestClassifier()
+clf = RandomForestClassifier(class_weight={0:1/18.6,1:1},min_samples_leaf=10)
 
 clf.fit(X,y)
 
 # %% TESTING 
-# raw_obj_test = PostProcess("datasets/2022_07_07/04/merged.bag",
-#                        tag_ids,
-#                        moment_arms,
-#                        num_meas=-1)
+raw_obj_test = PostProcess("datasets/2022_08_03/line_triangle_line/merged.bag",
+                       tag_ids,
+                       moment_arms,
+                       num_meas=-1)
 
 calib_obj_test = UwbCalibrate(raw_obj_test, rm_static=False)
 

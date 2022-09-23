@@ -1,7 +1,7 @@
 import os
 import rosbag
 
-directory_path = 'datasets/2022_07_07/'
+directory_path = 'datasets/2022_09_01_tag7/03/'
 
 new_bag = rosbag.Bag(directory_path+"merged.bag", 'w')
 

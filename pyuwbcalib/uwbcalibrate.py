@@ -1,716 +1,560 @@
+from typing import Tuple
 import numpy as np
-from numpy.linalg import inv
-import matplotlib.pyplot as plt
+from .postprocess import PostProcess
 from scipy.interpolate import UnivariateSpline
 from scipy.optimize import least_squares
 import pickle
+import pandas as pd
 
-class UwbCalibrate(object):
+class UwbCalibrate(PostProcess):
+    """A class to handle calibration of the UWB modules. 
+
+    This class inherits attributes from a PostProcess object. The attributes to be inherited
+    are specified in the attribute _inherited.    
+
+    Attributes
+    ----------
+    lift: function
+        The lifting function for power measurements.
+    delays: dict
+        Only exists after calib_antennas() is called.
+        keys: int
+            The ID of the tag.
+        values: float
+            The estimated antenna-delay for this tag.
+    bias_spl: UnivariateSpline
+        The learnt "bias vs. lifted power" spline.
+        Only exists after fit_power_model() is called.
+    std_spl: _type_
+        The learnt "standard deviation vs. lifted power" spline.
+        Only exists after fit_power_model() is called.
+
+    Examples
+    --------
+    # Let the variable 'data' be a PostProces object.
+    calib = UwbCalibrate(data, rm_static=True)
+
+    # Calibrate antenna delays
+    calib.calibrate_antennas()
+
+    # Correct power-correlated bias
+    calib.fit_power_model()
     """
-    # TODO: Update this and subsequent documentation.
-    Object to handle calibration for the DECAR/MRASL UWB modules.
+    # Speed of light
+    _c = 299702547 
 
-    PARAMETERS:
-    -----------
-    filename_1: str
-        Relative address of the file containing the timestamps of the TWR instances initiated
-        by the first tag (hereafter referred to as "tag i").
-    filename_2: str
-        Relative address of the file containing the timestamps of the TWR instances initiated
-        by the second tag (hereafter referred to as "tag j").
-    tag_ids: list of ints
-        List of IDs of the three tags involved in the calibration procedure.
-        The order is as follows:
-            1) TWR initializer in filename_1 (tag i).
-            2) TWR initializer in filename_2 (tag j).
-            3) The tag that never initialized a TWR instance (tag k).
-    average: bool
-        Flag to indicate whether measurements from static intervals should be averaged out.
-    static: bool
-        Flag to indicate whether the calibration experiment was done with static intervals.
-    thresh: float
-        Threshold to detect clock wraps and outliers, in nanoseconds.
-    """
+    # Attributes to be inherited from the PostProcess object
+    _inherited = [
+        'df',
+        'machine_ids',
+        'tag_ids',
+        'ds_twr',
+        'fpp_exists',
+    ]
+    
+    def __init__(
+        self, 
+        data, 
+        rm_static = False, 
+        f_lift = lambda x: 10**((x + 82)/10),
+    ) -> None:
+        """Constructor
 
-    _c = 299702547  # speed of light
-
-    def __init__(self, processed_data, rm_static=True):
+        Parameters
+        ----------
+        data: PostProcess
+            Processed data to be calibrated.
+        rm_static: bool, optional
+            Remove static regions at the beginning and end of experiments, 
+            by default False
+        f_lift: function, optional
+            The lifting function for power measurements for better fitting, 
+            by default lambda(x): 10 ** ( (x + 82) / 10 )
         """
-        Constructor
-        """
-        # Retrieve attributes from processed_data
-        self.tag_ids = processed_data.tag_ids
-        self.mult_twr = processed_data.mult_twr
-        self.num_meas = processed_data.num_meas
-        self.tag_pairs = processed_data.tag_pairs
-        self.num_of_tags = processed_data.num_of_tags
-
+        self._data = data
+        
         if rm_static:
-            self.ts_data = {}
-            self.time_intervals = {}
-            self.ts_data, self.time_intervals \
-                = self._remove_static_regions(processed_data.ts_data, processed_data.time_intervals)
+            self._remove_static_regions()
+
+        self.lift = f_lift
+
+    def __getattr__(self, attr) -> object:
+        """Inherit missing self._inherited attributes from PostProcess object.
+
+        Parameters
+        ----------
+        attr: object
+            Name of the attribute.
+
+        Returns
+        -------
+        object
+            The retrieved attribute value from the PostProcess object.
+
+        Raises
+        ------
+        Exception
+            Could not find the attribute: *attr
+        """
+        if attr in self._inherited:
+            return getattr(self._data, attr)
+        else: 
+            Exception(r"Could not find the attribute: " + attr)
+
+    def _remove_static_regions(self) -> None:
+        """Remove the static region in the extremes.
+        """
+        # Threshold for motion detection, in metres
+        thresh = 0.1
+
+        # Window size to compare measurements 
+        window = 10 
+        
+        lower_idx = 0
+        upper_idx = np.Inf
+
+        # Iterate machine by machine
+        for machine_i in self.machine_ids:
+            # Get the position of the machine
+            r_iw_a = self.get_machine_pos(machine_i, as_numpy = True)
+            
+            # Split the position into its dimensions
+            x = r_iw_a[:,0]
+            y = r_iw_a[:,1]
+            z = r_iw_a[:,2]
+            
+            # Get the lower and upper indices associated with static regions
+            # in the extremes
+            x_lower, x_upper = self._find_static_extremes(x, thresh, window)
+            y_lower, y_upper = self._find_static_extremes(y, thresh, window)
+            z_lower, z_upper = self._find_static_extremes(z, thresh, window)
+            
+            # Find first index associated with the robot not moving in any direction
+            lowest_low_idx = np.min([x_lower, y_lower, z_lower])
+            highest_upper_idx = np.max([x_upper, y_upper, z_upper])
+            
+            # Check if this robot was static for longer than others
+            if lowest_low_idx > lower_idx:
+                lower_idx = lowest_low_idx
+            if highest_upper_idx < upper_idx:
+                upper_idx = highest_upper_idx
+        
+        # Drop measurements when one or more robots are static
+        n = len(self.df)
+        self.df.drop(np.linspace(0,lower_idx,lower_idx+1), inplace=True)
+        self.df.drop(np.linspace(upper_idx, n-1, n-upper_idx), inplace=True)
+        
+    @staticmethod
+    def _find_static_extremes(
+        r,
+        thresh,
+        window
+    ) -> Tuple[int, int]:
+        """_summary_
+
+        Parameters
+        ----------
+        r: np.ndarray
+            The position measurements in one dimension.
+        thresh: float
+            Threshold for motion detection, in metres
+        window: int
+            # Window size to compare measurements 
+
+        Returns
+        -------
+        Tuple[int, int]
+            lower_idx: The lower index associated with the time the robot started 
+                moving in this direction.
+            upper_idx: The upper index associated with the time the robot stopped 
+                moving in this direction.
+        """
+        # Get the rolling mean based on the window size
+        rolling_mean = pd.DataFrame(r).rolling(window, center=True).mean()
+        
+        # Fill extremes
+        rolling_mean = rolling_mean.fillna(method="bfill").fillna(method="ffill")
+        rolling_mean = np.array(rolling_mean)
+        
+        # Find the deltas in the motion.
+        diff_lower = np.abs(rolling_mean[1:] - rolling_mean[0])
+        diff_upper = np.abs(np.flip(rolling_mean)[1:] - rolling_mean[-1])
+        
+        # Get the indices associated with changes greater than the threshold
+        lower_idx = np.argmax(diff_lower>thresh)
+        upper_idx = len(diff_lower) - np.argmax(np.flip(diff_upper)>thresh) - 1
+        
+        return lower_idx, upper_idx
+
+    def calibrate_antennas(
+        self, 
+        loss='cauchy', 
+        tx_rx_split={'tx':0.6, 'rx':0.4},
+    ) -> None:
+        """Estimate the antenna delays for the UWB tags, and correct the corresponding timestamps.
+
+        This corrects the following fields in self.df:
+            ['range', 
+             'bias', 
+             'tx1', 
+             'rx1', 
+             'tx2', 
+             'rx2', 
+             'tx3', 
+             'rx3', 
+             'del_t1', 
+             'del_t2']
+
+        TODO: The following fields remain uncorrected (to use tx_rx_split):
+            ['tof1', 
+             'tof2',
+             'tof3',
+             'sum_t1',
+             'sum_t2']
+
+        Parameters
+        ----------
+        loss: str, optional
+            Loss function to be used in scipy.interpolate.least_squares, by default 'cauchy'
+        tx_rx_split: dict, optional
+            Splitting the calibrated delay between transmission and reception delay, 
+            by default {'tx':0.6, 'rx':0.4} based on 
+            "Decawave (2018), APS014: DW1000 Antenna Delay Calibration Version 1.2. 1.15."
+        """
+        # Get IDs of all tags
+        tags = list(np.concatenate(list(self.tag_ids.values())).flat)
+        n = len(self.df)
+        
+        # Find the indices associated with the ranging tags for every measurement
+        from_idx = [tags.index(x) for x in np.array(self.df["from_id"])]
+        to_idx = [tags.index(x) for x in np.array(self.df["to_id"])]
+        rows = np.linspace(0,n-1,n).astype(int)
+        
+        # Compute the clock-skew gain, if using DS-TWR
+        if self.ds_twr:
+            K = self.df["del_t3"] / self.df["del_t4"]
         else:
-            self.ts_data = processed_data.ts_data
-            self.time_intervals = processed_data.time_intervals
-
-        self.range_idx = 2
-        self.tx1_idx = 3
-        self.rx1_idx = 4
-        self.tx2_idx = 5
-        self.rx2_idx = 6
-        self.tx3_idx = 7
-        self.rx3_idx = 8
-        self.fpp1_idx = 9
-        self.fpp2_idx = 10
-        self.rxp1_idx = 11
-        self.rxp2_idx = 12
-        self.std1_idx = 13
-        self.std2_idx = 14
-
-        self.lift = processed_data.lift
-
-    def _remove_static_regions(self, ts_data, time_intervals):
-        '''
-        Remove the static region in the extremes.
-        '''
-        lower_idxs, upper_idxs = self._find_static_extremes(ts_data, time_intervals)
+            K = 1
         
-        num_columns = 15
-        num_rows = lambda pair: upper_idxs[pair] - lower_idxs[pair] 
-        ts_data_trunc = {pair:np.zeros((num_rows(pair), num_columns)) for \
-                                                                pair in ts_data}
-        time_intervals_trunc = {pair:{} for pair in ts_data}
-
-        for pair in ts_data:
-            l_idx = lower_idxs[pair]
-            u_idx = upper_idxs[pair]
-            
-            for column in range(0,num_columns):
-                ts_data_trunc[pair][:,column] \
-                    = ts_data[pair][:,column][l_idx:u_idx]
-
-            for topic in time_intervals[pair]:
-                time_intervals_trunc[pair][topic] \
-                    = time_intervals[pair][topic][l_idx:u_idx]
-
-        return ts_data_trunc, time_intervals_trunc
-
-    @staticmethod
-    def _find_static_extremes(ts_data, time_intervals):
-        lower_idxs = {pair:[] for pair in ts_data}
-        upper_idxs = {pair:[] for pair in ts_data}
+        # Compute the A matrix
+        A = np.zeros((n,len(tags)))
+        A[rows, from_idx] += 0.5
+        A[rows, to_idx] += 0.5 * K
         
-        thresh = 0.2
-
-        for pair in ts_data:
-            gt = time_intervals[pair]['r_gt']
-            
-            # Lower bound
-            p1 = gt[0]
-            p2 = gt[100]
-            p3 = gt[200]
-
-            mean = (p1+p2+p3)/3
-            cond1 = np.abs(p1 - mean) > thresh
-            cond2 = np.abs(p2 - mean) > thresh
-            cond3 = np.abs(p3 - mean) > thresh
-            if cond1 or cond2 or cond3:
-                lower_idxs[pair] = 0
-            else:
-                mean = np.mean(gt[:200])
-                deviation = gt - mean
-                deviation_bool = deviation > thresh
-
-                # Find the first 2 consecutive true values
-                found_idx = False
-                for lv0 in range(401, len(gt)-5):
-                    cond = np.all(deviation_bool[lv0:lv0+2])
-                    if cond:
-                        lower_idxs[pair] = lv0
-                        found_idx = True
-                        break
-
-                if not found_idx:
-                    lower_idxs[pair] = 0
-
-            # Upper bound
-            p1 = gt[-1]
-            p2 = gt[-100]
-            p3 = gt[-200]
-
-            mean = (p1+p2+p3)/3
-            cond1 = np.abs(p1 - mean) > thresh
-            cond2 = np.abs(p2 - mean) > thresh
-            cond3 = np.abs(p3 - mean) > thresh
-            if cond1 or cond2 or cond3:
-                upper_idxs[pair] = len(gt)
-            else:
-                mean = np.mean(gt[-200:])
-                deviation = gt - mean
-                deviation_bool = deviation > thresh
-
-                # Find the first 2 consecutive true values
-                found_idx = False
-                for lv0 in range(-401, -len(gt)+5):
-                    cond = np.all(deviation_bool[lv0:lv0-2])
-                    if cond:
-                        upper_idxs[pair] = lv0
-                        found_idx = True
-                        break
-
-                if not found_idx:
-                    upper_idxs[pair] = len(gt)
-
-        return lower_idxs, upper_idxs
- 
-
-    def _calculate_skew_gain(self, pair):
-        """
-        Calculates the K parameter given by Ra2/Db2.
-        Gain set to 1 if twr_type == 0.
-
-        PARAMETERS:
-        -----------
-        initiating_idx: int
-            The index of the initiating tag (initiator) in self.tag_ids.
-        target_idx: int
-            The index of the target tag in self.tag_ids.
-
-        RETURNS:
-        --------
-        np.array: The K values for all the measurements.
-        """
-        Ra2 = self.time_intervals[pair]["Ra2"]
-        Db2 = self.time_intervals[pair]["Db2"]
-
-        if self.mult_twr:
-            return Ra2 / Db2
-        else:
-            return Ra2 / Ra2
-
-    def _setup_A_matrix(self, pair, tags, K):
-        """
-        Calculates the A matrix for the linear least-squares problem.
-
-        PARAMETERS:
-        -----------
-        K: np.array
-            The skew gain K.
-        initiating_idx: int
-            The index of the initiating tag (initiator) in self.tag_ids.
-        target_idx: int
-            The index of the target tag in self.tag_ids.
-
-        RETURNS:
-        --------
-        2D np.array: The A matrix.
-        """
-        initiating_idx = tags.index(pair[0])
-        target_idx = tags.index(pair[1]) 
-
-        n = len(K)
-        A = np.zeros((n, len(tags)))
-        A[:, initiating_idx] += 0.5
-        A[:, target_idx] = 0.5 * K
-
-        return A
-
-    def _setup_b_vector(self, pair, K):
-        """
-        Calculates the b vector for the linear least-squares problem.
-
-        PARAMETERS:
-        -----------
-        K: np.array
-            The skew gain K.
-        initiating_idx: int
-            The index of the initiating tag (initiator) in self.tag_ids.
-        target_idx: int
-            The index of the target tag in self.tag_ids.
-
-        RETURNS:
-        --------
-        np.array: The b vector.
-        """
-        gt = self.time_intervals[pair]["r_gt"]
-        Ra1 = self.time_intervals[pair]["Ra1"]
-        Db1 = self.time_intervals[pair]["Db1"]
-
-        b = 1 / self._c * gt * 1e9 - 0.5 * (Ra1) + 0.5 * K * (Db1)
-
-        return np.reshape(b, (len(K), 1))
-
-    def _solve_for_antenna_delays(self, A, b):
-        """
-        Solves the linear least-squares problem.
-
-        PARAMETERS:
-        -----------
-        A: 2D np.array
-            The A matrix.
-        b: np.array
-            The b vector.
-
-        RETURNS:
-        --------
-        np.array: The solution to the Ax=b problem.
-        """
-        # return np.linalg.lstsq(A, b)
-        n = A.shape[1]
-        return least_squares(self._cost_func, np.zeros(n), loss='cauchy', f_scale=0.1, args=(A,b.T))
-
-    @staticmethod
-    def _cost_func(x,A,b):
-        return (A@x - b).reshape(-1,)
-
-    def filter_data(self, Q, R, visualize=False):
-        if visualize:
-            num_of_pairs = len(self.time_intervals)
-            fig, axs = plt.subplots(num_of_pairs, sharey='all', sharex='all')
-
-        for lv0, pair in enumerate(self.tag_pairs):
-            x_hist, P_hist, kf_outliers_idx = self._clock_filter(pair, Q, R)
-            
-            self._update_tof_intervals(pair, x_hist[0,:])
-
-            if visualize: 
-                Ra2 = self.time_intervals[pair]["Ra2"]
-                Db2 = self.time_intervals[pair]["Db2"]
-                S1 = self.time_intervals[pair]["S1"]
-                S2 = self.time_intervals[pair]["S2"]
-                Db1 = self.time_intervals[pair]["Db1"]
-                y1 = 0.5*(S1 - S2)
-                y2 = Db2 - Ra2
-                y_tau = - y1 - 0.5*(Db1/(Db2-Db1))*y2
-
-                self._plot_kf(x_hist, P_hist, axs[lv0], y_tau, kf_outliers_idx)
-
-        if visualize:
-            plt.show()
-
-    def _update_tof_intervals(self, pair, tau):
-        # TODO: Take uncertainty into consideration?
-        self.time_intervals[pair]["tof1"] \
-            = self.time_intervals[pair]["tof1"] - tau
-
-        self.time_intervals[pair]["tof2"] \
-            = self.time_intervals[pair]["tof2"] + tau
-
-        if self.mult_twr:
-            self.time_intervals[pair]["tof3"] \
-                = self.time_intervals[pair]["tof3"] + tau
-
-    @staticmethod
-    def _plot_kf(x, P, axs, y_tau, outliers):
-        inliers = ~outliers
-        axs.plot(x[0,inliers]-y_tau[inliers])
-
-        axs.ticklabel_format(style='plain')
-        
-        P_iter = P[1,1,:]
-        P_iter = P_iter.reshape(-1,)
-        axs.plot(x[0,:] + 3*np.sqrt(P_iter))
-        axs.plot(x[0,:] - 3*np.sqrt(P_iter))
-
-    def _clock_filter(self, pair, Q, R):
-        # Intervals
-        dt = self.time_intervals[pair]["dt"]
-        Ra2 = self.time_intervals[pair]["Ra2"]
-        Db2 = self.time_intervals[pair]["Db2"]
-        S1 = self.time_intervals[pair]["S1"]
-        S2 = self.time_intervals[pair]["S2"]
-        Db1 = self.time_intervals[pair]["Db1"]
-
-        # Storage variables
-        n = dt.size
-        x_hist = np.zeros((2,n))
-        P_hist = np.zeros((2,2,n))
-        kf_outliers_idx = np.zeros((n,), dtype=bool)
-
-        # Initial estimate and uncertainty
-        tau = 0
-        skew = 0
-        x = np.array([tau, skew])
-        x = x.reshape(2,1)
-        P = np.array(([1e18,0],[0,1e9])) # TODO: better estimate of initial uncertainty
-        # P = np.array(([1,0],[0,1])) # TODO: better estimate of initial uncertainty
-
-        for lv0, dt_iter in enumerate(dt):
-            Ra2_iter = Ra2[lv0]
-            Db2_iter = Db2[lv0]
-            S1_iter = S1[lv0]
-            S2_iter = S2[lv0]
-            Db1_iter = Db1[lv0]
-
-            if lv0>0:
-                x, P = self._propagate_clocks(x, P, dt_iter, Q)
-                P = 0.5*(P + P.T)
-
-            y = self._compute_pseudomeasurement(Ra2_iter, Db2_iter, S1_iter, S2_iter, Db1_iter)
-            x_temp, P_temp, reject = self._correct_clocks(x, P, y, R, Db1_iter, Db2_iter)
-
-            if reject:
-                kf_outliers_idx[lv0] = True
-            else:
-                P = 0.5*(P + P.T)
-
-                x = x_temp
-                P = P_temp
-            
-            x_hist[:,lv0] = x.reshape(2,)
-            P_hist[:,:,lv0] = P    
-            
-        return x_hist, P_hist, kf_outliers_idx
-
-    @staticmethod
-    def _compute_pseudomeasurement(Ra2, Db2, S1, S2, Db1):
-        y1 = 0.5*(S1 - S2)
-        y2 = Db2 - Ra2
-        # return np.array([y1, y2]).reshape(2,1)
-        y = - y1 - 0.5*(Db1/(Db2-Db1))*y2
-        return y
-
-    @staticmethod
-    def _correct_clocks(x, P, y, R, Db1, Db2):
-        # C = np.array([[-1,0.5*Db1/1e9], [0, -Db2/1e9]])
-        C = np.array([1, 0])
-        C = C.reshape(1,2)
-
-        y_check = C @ x
-
-        # R_matrix = np.array([[1.25*R, 0.5*R], [0.5*R, 2*R]])
-        R_matrix = R
-
-        # NIS Test
-        innovation = y - y_check
-        S = C @ P @ C.T + R_matrix
-        eps = innovation.T @ inv(S) @ innovation
-        if eps > 10:
-            reject = True
-            x_new = []
-            P_new = []
-        else:
-            K = P @ C.T @ inv(S)
-
-            reject = False
-            x_new = x + K @ innovation
-            P_new = (np.eye(2) - K @ C) @ P    
-
-        return x_new, P_new, reject
-
-    @staticmethod
-    def _propagate_clocks(x, P, dt, Q):
-        dt = dt/1e9
-        A = np.array(([1, dt], [0, 1]))
-        L = np.array(([dt, 0.5*dt**2], [0, dt]))
-
-        x_new = A @ x
-        P_new = A @ P @ A.T + L @ Q @ L.T / dt
-        
-        return x_new, P_new
-
-    @staticmethod
-    def _rolling_window(a, window):
-        '''
-        Copied from 
-        https://stackoverflow.com/questions/27427618/how-can-i-simply-calculate-the-rolling-moving-variance-of-a-time-series-in-pytho
-        '''
-        pad = np.ones(len(a.shape), dtype=np.int32)
-        pad[-1] = window-1
-        pad = list(zip(pad, np.zeros(len(a.shape), dtype=np.int32)))
-        a = np.pad(a, pad,mode='reflect')
-        shape = a.shape[:-1] + (a.shape[-1] - window + 1, window)
-        strides = a.strides + (a.strides[-1],)
-        return np.lib.stride_tricks.as_strided(a, shape=shape, strides=strides)
-
-    def _reject_outliers(self, bias, lifted_pr, std_window, chi_thresh, axs):
-        '''
-        keep fitting models and rejecting outliers until no more outliers
-        '''
-        outlier_bias = np.empty(0,)
-        outlier_lifted_pr = np.empty(0,)
-        while True:
-            # Fit 
-            bias_std = np.std(self._rolling_window(bias.ravel(), std_window), axis=-1)
-            std_spl = UnivariateSpline(lifted_pr, bias_std, k=3)
-            bias_std = std_spl(lifted_pr)
-
-            # Fit spline
-            spl = UnivariateSpline(lifted_pr, bias,k=3)
-            bias_fit = spl(lifted_pr)
-
-            # Remove outliers
-            norm_e_squared = (bias - bias_fit)**2 / bias_std**2
-            outliers = norm_e_squared > chi_thresh
-            if np.sum(outliers):
-                outlier_bias = np.hstack((outlier_bias, bias[outliers]))
-                bias = bias[~outliers]
-
-                outlier_lifted_pr = np.hstack((outlier_lifted_pr, lifted_pr[outliers]))
-                lifted_pr = lifted_pr[~outliers] 
-            else:
-                break
-
-        # PLOTTING
-        axs.scatter(lifted_pr, bias)
-        axs.scatter(outlier_lifted_pr, outlier_bias)
-        axs.set_xlabel(r"$f(P_r)$")
-        axs.set_ylabel(r"Bias [m]")
-
-        return spl, std_spl, bias, lifted_pr
-
-    def fit_model(self, std_window=50, chi_thresh=10.8, merge_pairs=False):
-        
-        if merge_pairs:
-            sorted_pairs = [tuple(sorted(i)) for i in self.tag_pairs]
-            addressed_pairs = list(set(sorted_pairs))
-            for i, pair in enumerate(addressed_pairs):
-                if pair not in self.tag_pairs:
-                    addressed_pairs[i] = pair[::-1]
-        else:
-            addressed_pairs = self.tag_pairs
-
-        num_pairs = len(addressed_pairs)
-        # fig, axs = plt.subplots(3,num_pairs,sharey='row')
-        fig, axs = plt.subplots(4,int(np.ceil((num_pairs+1)/4)),sharey='all',sharex='all')
-        fig2, axs2 = plt.subplots(2,1) 
-        fig3, axs3 = plt.subplots(4,int(np.ceil((num_pairs+1)/4)),sharey='all',sharex='all') 
-        fig3.suptitle(r"Outlier rejection")
-        axs[0,0].set_ylabel(r"Bias [m]")
-
-        self.mean_spline = {pair:[] for pair in addressed_pairs}
-        self.std_spline = {pair:[] for pair in addressed_pairs}
-
-        self._all_spline_data = {'lifted_pr_trunc': np.empty(0),
-                                 'lifted_pr': np.empty(0),
-                                 'bias': np.empty(0),
-                                 'std': np.empty(0)}
-
-        for lv0, pair in enumerate(addressed_pairs):
-            range = self.compute_range_meas(pair)
-            bias = range - self.time_intervals[pair]["r_gt"]
-            lifted_pr = 0.5*self.lift(self.ts_data[pair][:,self.fpp1_idx]) \
-                        + 0.5*self.lift(self.ts_data[pair][:,self.fpp2_idx])
-            r_gt_unsorted = self.time_intervals[pair]["r_gt"]
-
-            if merge_pairs and pair[::-1] in self.tag_pairs:
-                opposite_pair = pair[::-1]
-                range_new = self.compute_range_meas(opposite_pair)
-                range = np.append(range, range_new)
-                bias = np.append(bias, range_new - self.time_intervals[opposite_pair]["r_gt"])
-                lifted_pr = np.append(lifted_pr, 
-                                      0.5*self.lift(self.ts_data[opposite_pair][:,self.fpp1_idx]) \
-                                      + 0.5*self.lift(self.ts_data[opposite_pair][:,self.fpp2_idx]))
-                r_gt_unsorted = np.append(r_gt_unsorted, self.time_intervals[opposite_pair]["r_gt"])
-
-            pr_thresh = 2
-            bias = bias[lifted_pr < pr_thresh]
-            r_gt_unsorted = r_gt_unsorted[lifted_pr < pr_thresh]
-            lifted_pr = lifted_pr[lifted_pr < pr_thresh]   
-
-            # rolling var along last axis
-            sort_pr = np.argsort(lifted_pr)
-            bias = bias[sort_pr]
-            lifted_pr = lifted_pr[sort_pr]
-            r_gt = r_gt_unsorted[sort_pr]
-
-            spl, std_spl, bias_trunc, lifted_pr_trunc \
-                        = self._reject_outliers(bias, lifted_pr, std_window, chi_thresh, axs3[np.mod(lv0,4),int(np.floor(lv0/4))])
-            self.mean_spline[pair] = spl
-            self.std_spline[pair] = std_spl
-            bias_std = std_spl(lifted_pr)
-            bias_fit = spl(lifted_pr)
-
-            # Save the fit data 
-            self._all_spline_data['lifted_pr_trunc'] = np.append(self._all_spline_data['lifted_pr_trunc'], lifted_pr_trunc)
-            self._all_spline_data['lifted_pr'] = np.append(self._all_spline_data['lifted_pr'], lifted_pr)
-            self._all_spline_data['bias'] = np.append(self._all_spline_data['bias'], bias_trunc)
-            self._all_spline_data['std'] = np.append(self._all_spline_data['std'], bias_std)
-
-            ### PLOT 1 ###
-            axs[np.mod(lv0,4),int(np.floor(lv0/4))].scatter(lifted_pr_trunc, bias_trunc, label=r"Raw data", linestyle="dotted", s=1)
-            axs[np.mod(lv0,4),int(np.floor(lv0/4))].plot(lifted_pr, bias_fit, label=r"Fit")
-            axs[np.mod(lv0,4),int(np.floor(lv0/4))].fill_between(
-                lifted_pr.ravel(),
-                bias_fit - 3 * bias_std,
-                bias_fit + 3 * bias_std,
-                alpha=0.5,
-                label=r"99.97% confidence interval",
-            )
-            axs[np.mod(lv0,4),int(np.floor(lv0/4))].set_xlabel(r"$f(P_r)$")
-            
-            # ## Visualize std vs. distance
-            # axs[2,lv0].scatter(r_gt, bias_std, s=1)
-            # axs[2,lv0].set_xlabel(r"Ground truth distance [m]")
-
-            ### PLOT 2 ### Plot with all splines
-            axs2[0].plot(lifted_pr, bias_fit, label=r"Pair "+str(pair))
-            axs2[0].legend(loc='upper right')
-            axs2[0].set_xlabel(r"$f(P_r)$")
-            axs2[0].set_ylabel(r"Bias [m]")
-            fig2.suptitle(r"Bias-Power Fit")
-
-            axs2[1].plot(lifted_pr, bias_std, label=r"Pair "+str(pair))
-            axs2[1].legend()
-            axs2[1].set_xlabel(r"$f(P_r)$")
-            axs2[1].set_ylabel(r"Bias Std [m]")
-
-        axs[0,-1].legend()
-
-        # Sort stored fit data
-        sort_pr = np.argsort(self._all_spline_data['lifted_pr_trunc'])
-        self._all_spline_data['lifted_pr_trunc'] = self._all_spline_data['lifted_pr_trunc'][sort_pr]
-        self._all_spline_data['bias'] = self._all_spline_data['bias'][sort_pr]
-        self._all_spline_data['std'] = self._all_spline_data['std'][sort_pr]
-
-        sort_pr = np.argsort(self._all_spline_data['lifted_pr'])
-        self._all_spline_data['lifted_pr'] = self._all_spline_data['lifted_pr'][sort_pr]
-
-        # Fit a spline to the full dataset as well (i.e., not split by pairs)
-        bias_std = np.std(self._rolling_window(self._all_spline_data['bias'].ravel(), std_window), axis=-1)
-        std_spl = UnivariateSpline(self._all_spline_data['lifted_pr_trunc'], bias_std, k=3)
-        bias_std = std_spl(self._all_spline_data['lifted_pr'])
-
-        # Fit spline
-        spl = UnivariateSpline(self._all_spline_data['lifted_pr_trunc'], self._all_spline_data['bias'])
-        bias_fit = spl(self._all_spline_data['lifted_pr'])
-
-        spl, std_spl, bias_trunc, lifted_pr_trunc \
-                        = self._reject_outliers(self._all_spline_data['bias'], 
-                                                self._all_spline_data['lifted_pr_trunc'], 
-                                                std_window, 
-                                                chi_thresh, 
-                                                axs3[np.mod(lv0+1,4),int(np.floor((lv0+1)/4))])
-
-        bias_std = std_spl( self._all_spline_data['lifted_pr'])
-        bias_fit = spl( self._all_spline_data['lifted_pr'])
-
-        axs[np.mod(lv0+1,4),int(np.floor((lv0+1)/4))].scatter(lifted_pr_trunc,
-                                                            bias_trunc, 
-                                                            label=r"Raw data", 
-                                                            linestyle="dotted", 
-                                                            s=1)
-        axs[np.mod(lv0+1,4),int(np.floor((lv0+1)/4))].plot( self._all_spline_data['lifted_pr'], bias_fit, label=r"Fit")
-        axs[np.mod(lv0+1,4),int(np.floor((lv0+1)/4))].fill_between(
-             self._all_spline_data['lifted_pr'].ravel(),
-            bias_fit - 3 * bias_std,
-            bias_fit + 3 * bias_std,
-            alpha=0.5,
-            label=r"99.97% confidence interval",
-        )
-        axs[np.mod(lv0+1,4),int(np.floor((lv0+1)/4))].set_xlabel(r"$f(P_r)$")
-
-        axs2[0].plot(self._all_spline_data['lifted_pr'], bias_fit, label=r"All", linewidth=3)
-        axs2[0].legend(loc='upper right')
-        axs2[0].set_xlabel(r"$f(P_r)$")
-        axs2[0].set_ylabel(r"Bias [m]")
-        fig2.suptitle(r"Bias-Power Fit")
-
-        axs2[1].plot(self._all_spline_data['lifted_pr'], bias_std, label=r"All", linewidth=3)
-        axs2[1].legend()
-        axs2[1].set_xlabel(r"$f(P_r)$")
-        axs2[1].set_ylabel(r"Bias Std [m]")
-
-        self.spl = spl
-        self.std_spl = std_spl
-
-    def calibrate_antennas(self):
-        """
-        Calibrate the antenna delays by formulating and solving a linear least-squares problem.
-
-        RETURNS:
-        --------
-        dict: Dictionary with 3 fields each for tag z \in {i,j,k}
-            Module i: (float)
-                Antenna delay for tag i
-        """
-        tags = sum(list(self.tag_ids.values()),[])
-
-        A = np.zeros((0,len(tags)))
-        b = np.zeros((0,1))
-        for pair in self.tag_pairs:
-            K = self._calculate_skew_gain(pair)
-            A = np.vstack((A, self._setup_A_matrix(pair, tags, K)))
-            b = np.vstack((b, self._setup_b_vector(pair, K)))
-
-        nan_idx = ~np.isnan(b)
-        nan_idx = nan_idx.flatten()
-        A = A[nan_idx, :]
-        b = b[nan_idx]
-
-        x = self._solve_for_antenna_delays(A, b)['x']
+        # Compute the b column matrix
+        b = 1 / self._c * self.df["gt_range"] * 1e9 \
+            - 0.5 * self.df["del_t1"] \
+            + 0.5 * K * self.df["del_t2"]
+        b = np.array(b)
+
+        # Solve for the delays
+        x = self._solve_for_antenna_delays(A, b, loss)['x']
         x = x.flatten()
 
-        print(np.linalg.norm(b))
-        print(np.linalg.norm(b.T - A @ x))
+        # Separate the delays per tag
+        self.delays = {id: x[i] for i,id in enumerate(tags)}
+        
+        # Correct the stored range measurements and timestamps
+        self._correct_antenna_delays(tx_rx_split)
 
-        self.delays = x
+    def _correct_antenna_delays(self, tx_rx_split) -> None:
+        """Correct the stored range measurements and timestamps by utilizing the
+        estimated tag-dependent antenna delays.
 
-        return {id: x[i] for i,id in enumerate(tags)}
-
-    def correct_antenna_delay(self, delays_dict):
+        Parameters
+        ----------
+        tx_rx_split: dict
+            The split of the calibrated delay between transmission and reception delay.
         """
-        Modifies the data of this object to correct for the antenna delay of a
-        specific module.
+        # Find the delays associated with the ranging tags for every measurement
+        from_delay = np.array([self.delays[x] for x in np.array(self.df["from_id"])])
+        to_delay = np.array([self.delays[x] for x in np.array(self.df["to_id"])])
+        
+        # Correct the intervals
+        self.df["del_t1"] += from_delay
+        self.df["del_t2"] -= to_delay
+        
+        # Compute the individual delays
+        tx_from_delay = tx_rx_split['tx'] * from_delay
+        rx_from_delay = tx_rx_split['rx'] * from_delay
+        tx_to_delay = tx_rx_split['tx'] * to_delay
+        rx_to_delay = tx_rx_split['rx'] * to_delay
 
-        PARAMETERS:
-        -----------
-        id: int
-            Module ID whose antenna delay is to be corrected.
-        delay: float
-            The amount of antenna delay, in nanoseconds.
+        # Correct the individual timestamps
+        self.df["tx1"] = -tx_from_delay
+        self.df["rx2"] = rx_from_delay
 
-        TODO: What about D1 and D2? This seems to be a problem.
-              We might have to calibrate for TX and RX delays separately
-              if we are to proceed with Kalman filtering with this architecture.
-        TODO: tof1, tof2, and tof3 as well, once individual delays are taken into consideration.
-        TODO: access delays from self object
+        self.df["rx1"] = rx_to_delay
+        self.df["tx2"] = -tx_to_delay
+
+        if self.ds_twr:
+            self.df["tx3"] = -tx_to_delay
+            self.df["rx3"] = rx_to_delay
+
+        # Correct the range measurements and bias
+        self.df['range'] = self.compute_range_meas()
+        self.df['bias'] = self.df.apply(
+            self._get_bias, 
+            axis=1
+        )
+
+    def _solve_for_antenna_delays(
+        self, 
+        A, 
+        b, 
+        loss
+    ) -> dict:
+        """Solve the antenna-delay robust-least-squares problem.
+
+        Parameters
+        ----------
+        A: np.ndarray
+            The A matrix in the Ax=b linear system.
+        b: np.ndarray
+            The b column matrix in the Ax=b linear system.
+        loss: str
+            Loss function to be used in scipy.interpolate.least_squares.
+
+        Returns
+        -------
+        np.ndarray
+            The solution to x in the Ax=b linear system, using robust least squares.
         """
-        for id in delays_dict.keys():
-            delay = delays_dict[id]
-            for pair in self.time_intervals:
-                if pair[0] == id:
-                    self.time_intervals[pair]["Ra1"] += delay
-                elif pair[1] == id:
-                    self.time_intervals[pair]["Db1"] -= delay
+        n = A.shape[1]
+        return least_squares(
+            self._cost_func, 
+            np.zeros(n), 
+            loss=loss, 
+            f_scale=0.1, 
+            args=(A,b.T)
+        )
 
-    def compute_range_meas(self, pair=(1,2), visualize=False, owr = False):
-        # TODO: Inherit this function from PostProcess?
-        interv = self.time_intervals[pair]
-        if owr and self.mult_twr:
-            range = 1/2 * self._c / 1e9 \
-                    * (abs(interv["tof1"]) \
-                       + abs(interv["tof2"]) \
-                       + 0*abs(interv["tof3"])) # TODO: why *0? Antenna delay?
-        elif owr:
-            range = 1/2 * self._c / 1e9 \
-                    * (abs(interv["tof1"]) \
-                       + abs(interv["tof2"]))
-        elif self.mult_twr:
+    @staticmethod
+    def _cost_func(x, A, b) -> np.ndarray:
+        """The cost function used in the least squares problem.
+
+        Parameters
+        ----------
+        x: np.ndarray 
+            The unknowns to be solved for; in other words, the x column matrix 
+            in the Ax=b linear system.
+        A: np.ndarray
+            The A matrix in the Ax=b linear system.
+        b: np.ndarray
+            The b column matrix in the Ax=b linear system.
+
+        Returns
+        -------
+        np.ndarray
+            The evaluated cost.
+        """
+        return (A@x - b).reshape(-1,)
+
+    @staticmethod
+    def get_avg_lifted_pr(pr1, pr2, f) -> float:
+        """Get the average of the lifted powers. 
+
+        Parameters
+        ----------
+        pr1: np.ndarray
+            The first power value to be lifted.
+        pr2: np.ndarray
+            The second power value to be lifted.
+        f: _type_
+            The lifting function.
+
+        Returns
+        -------
+        float
+            Average lifted power.
+        """
+        return 0.5 * (f(pr1) + f(pr2))
+
+    def fit_power_model(
+        self, 
+        std_window=25,
+        thresh={'bias': 0.3, 'std': 3}
+    ) -> None:
+        """Fit the bias vs power and standard deviation vs power splines, and 
+        correct the range measurements.
+
+        This adds a new column with header 'std' to the main dataframe, 
+        representing the standard deviation of the measurement based on the 
+        received first-path power and the calibration results. 
+
+        This corrects the following fields in self.df:
+            ['range', 
+             'bias']
+
+        TODO: The following fields remain uncorrected:
+            ['tx1', 
+             'rx1', 
+             'tx2', 
+             'rx2', 
+             'tx3', 
+             'rx3', 
+             'del_t1',
+             'del_t2',
+             'tof1',
+             'tof2',
+             'tof3',
+             'sum_t1',
+             'sum_t2']
+
+        Parameters
+        ----------
+        std_window: int, optional
+            The window size of measurements for computing the standard deviations, 
+            by default 25
+        thresh: dict, optional
+            The bias thresholds for outlier rejection.
+            keys: str
+                The type of calibration.
+            values: float
+                The threshold used for this type of power-correlated calibration.
+            by default {'bias': 0.3, 'std': 3}
+        """
+        # Get the average lifted power
+        lifted_pr = self.get_avg_lifted_pr(
+            np.array(self.df['fpp1']), 
+            np.array(self.df['fpp2']), 
+            self.lift
+        )
+
+        # Sort the bias and power data based on the power data
+        sort_pr = np.argsort(lifted_pr)
+        bias = np.array(self.df['bias'])[sort_pr]
+        lifted_pr = lifted_pr[sort_pr]
+
+        # Bias vs. FPP: Remove outliers and fit a spline
+        lifted_pr_inl, bias_inl = \
+                self.remove_outliers(lifted_pr, 
+                                     bias, 
+                                     thresh['bias'])
+        self.bias_spl = self.fit_spline(lifted_pr_inl, 
+                                        bias_inl)
+
+        # Standard deviation vs. FPP: Remove outliers and fit a spline
+        lifted_pr_inl, bias_inl = \
+                self.remove_outliers(lifted_pr, 
+                                     bias, 
+                                     thresh['std'])
+        std = pd.DataFrame(bias_inl).rolling(std_window).std()
+        std = std.fillna(method="bfill").fillna(method="ffill").to_numpy()
+        self.std_spl = self.fit_spline(lifted_pr_inl, 
+                                       std,
+                                       k=4)
+
+        # Undo sort
+        lifted_pr_unsorted = lifted_pr[np.argsort(sort_pr)]
+
+        # Update the main dataframe with the calibration results
+        self.df['std'] = self.std_spl(lifted_pr_unsorted)
+        self.df['range'] -= self.bias_spl(lifted_pr_unsorted)
+        self.df['bias'] = self.df.apply(
+                                        self._get_bias, 
+                                        axis=1
+                                       )
+
+    @staticmethod
+    def remove_outliers(
+        x, 
+        y, 
+        thresh
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Remove outliers by fitting a spline through the data and 
+        removing datapoints that are further from the spline than the
+        threshold.
+
+        Parameters
+        ----------
+        x : np.ndarray
+            Independent input data.
+        y : np.ndarray
+            Dependent input data.
+        thresh : float
+            Threshold for rejecting outliers.
+
+        Returns
+        -------
+        Tuple[np.ndarray, np.ndarray]
+            x: np.ndarray
+                Independent input data inliers.
+            y: np.ndarray
+                Dependent input data inliers.
+        """
+        # Fit spline
+        spl = UnivariateSpline(x, y, k=3)
+        y_fit = spl(x)
+
+        # Find index of datapoints within a threshold away from the fit.
+        inliers_idx = np.abs(y - y_fit) <= thresh
+
+        return x[inliers_idx], y[inliers_idx]
+
+    @staticmethod
+    def fit_spline(
+        x, 
+        y, 
+        k=3
+    ) -> UnivariateSpline:
+        """Fit a UnivariateSpline to the data.
+
+        Parameters
+        ----------
+        x : np.ndarray
+            Independent input data.
+        y : np.ndarray
+            Dependent input data.
+        k: int, optional
+            Degree of the smoothing spline, by default 3
+
+        Returns
+        -------
+        UnivariateSpline
+            The fitted spline.
+        """
+        return UnivariateSpline(x, 
+                                y, 
+                                k=k)
+
+    def compute_range_meas(self) -> np.ndarray:
+        """Compute the range measurement based on the timestamp intervals.
+
+        Returns
+        -------
+        np.ndarray
+            Range measurements.
+        """
+        del_t1 = self.df['del_t1']
+        del_t2 = self.df['del_t2']
+        if self.ds_twr:
+            del_t3 = self.df['del_t3']
+            del_t4 = self.df['del_t4']
             range = 0.5 * self._c / 1e9 * \
-                (interv["Ra1"] - (interv["Ra2"] / interv["Db2"]) * interv["Db1"])
+                    (del_t1 - (del_t3 / del_t4) * del_t2)
         else:
             range = 0.5 * self._c / 1e9 * \
-                (interv["Ra1"] - interv["Db1"])
-
-        if visualize:
-            fig, axs = plt.subplots(1)
-
-            axs.plot(interv["t"]/1e9, range, label='Range Measurements')
-
-            axs.set_ylabel("Distance [m]")
-            axs.set_xlabel("t [s]")
-            axs.set_ylim([-1, 5])
+                    (del_t1 - del_t2)
 
         return range
 
-    def save_calib_results(self):
-        calib_results = {
-                        'delays': self.delays,
-                        'bias_spl': self.spl,
-                        'std_spl': self.std_spl,
-                        }
+    def save_calib_results(
+        self, 
+        filename="calib_results.pickle"
+    ) -> None:
+        """Save the calibration results.
 
-        with open("calib_results.pickle","wb") as file:
+        Parameters
+        ----------
+        filename: str, optional
+            The name of the pickle file, by default "calib_results.pickle"
+        """
+        calib_results = {
+            'delays': self.delays,
+            'bias_spl': self.bias_spl,
+            'std_spl': self.std_spl,
+        }
+
+        with open(filename,"wb") as file:
             pickle.dump(calib_results, file)
