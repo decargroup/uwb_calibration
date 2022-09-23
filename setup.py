@@ -8,7 +8,7 @@ setuptools.setup(
     version="1.0.0",
     author="Mohammed Shalaby, Charles Cossette",
     author_email="mohammed.shalaby@mail.mcgill.ca, charles.cossette@mail.mcgill.ca",
-    description="A package for everything calibration related for the MRASL/DECAR UWB modules.",
+    description="A package for everything calibration related for UWB modules.",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="<>",
