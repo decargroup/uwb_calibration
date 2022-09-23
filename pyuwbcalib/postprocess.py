@@ -1,635 +1,535 @@
 import numpy as np
-from bagpy import bagreader
 import pandas as pd
-from itertools import combinations
-import matplotlib.pyplot as plt
-from scipy.spatial.transform import Rotation as R
-from scipy.interpolate import interp1d
+from pylie import SO3
+from .utils import interpolate
 
 class PostProcess(object):
+    """A class to process pose and UWB data from multiple UWB tags.
+
+    Attributes
+    ----------
+    merge_pairs: bool
+        If pairs are merged together irrespective of whom of the pair initiates.
+    machine_ids: list of str
+        The IDs of all the machines.
+    tag_ids: dict
+        keys: str
+            The ID of the machine.
+        values: list of int
+            The IDs of the tag installed on this machine.
+    moment_arms: dict
+        keys: int
+            The ID of the tag
+        values: list
+            The 3D position of the tag relative to the machine's reference point,
+            in the machine's body frame.
+    max_ts_value: float
+        The maximum timestamp value that can be recorded by the machine before wrapping.
+        For example, if the timestamp is recorded as uint32, then max_ts_value = 2**32.
+    ts_to_ns: float
+        The conversion from timestamp value to nanoseconds.
+    ds_twr: bool
+        If double-sided TWR is used; False represents single-sided TWR.
+    fpp_exists: bool
+        If the first-path power is recorded.
+    rxp_exists: bool
+        If the average received power is recorded.
+    std_exists: bool
+        If the leading-edge-detection's uncertainty metric is recorded.
+    pair_list: list of tuple
+        A list of all the unique pairs of ranging tags.
+    df: pd.DataFrame
+        A dataframe of the processed data with the following columns.
+        'time': float
+            Timestamp of the measurement, in seconds.
+        'range': float
+            The recorded range measurement.
+        'from_id': int
+            The ID of the initiating tag. 
+        'to_id': int
+            The ID of the target tag.
+        'tx1': float
+            The transmission timestamp of the first signal.
+        'rx1': float
+            The reception timestamp of the first signal.
+        'tx2': float
+            The transmission timestamp of the second signal.
+        'rx2': float
+            The reception timestamp of the second signal.
+        'tx3': float
+            The transmission timestamp of the third signal. 
+            Only exists if self.ds_twr == True.
+        'rx3': float
+            The reception timestamp of the third signal. 
+            Only exists if self.ds_twr == True. 
+        'fpp1': float
+            The received first-path power of the first signal.
+            Only exists if self.fpp_exists == True.
+        'fpp2': float
+            The received first-path power of the second signal.
+            Only exists if self.fpp_exists == True.
+        'rxp1': float
+            The receieved average power of the first signal. 
+            Only exists if self.rxp_exists == True.
+        'rxp2': float
+            The received average power of the second signal.
+            Only exists if self.rxp_exists == True.
+        'std1': int
+            The leading-edge detection algorithm's uncertainty on the first signal.
+            Only exists if self.std_exists == True.
+        'std2': int
+            The leading-edge detection algorithm's uncertainty on the second signal.
+            Only exists if self.std_exists == True.
+        'r_iw_a_*': list of float
+            Position of machine (*), as recorded by the motion-capture system.
+            There exists one column per machine, where * is replaced with machine_id.
+        'q_ai_*': np.ndarray
+            Quaternion parametrization of the orientation of machine (*) using the 
+            [x,y,z,w] convention, as recorded by the motion-capture system.
+            There exists one column per machine, where * is replaced with machine_id.
+        'gt_range': float
+            The ground-truth distance between the ranging tags.
+        'bias': float
+            The bias in the measurement, computed as 
+            >>> df['bias'] = df['range'] - df['gt_range']
+        'pair': tuple
+            The pair of ranging tags, computed as
+            >>> df['pair'] = (df['from_id'], df['to_id'])
+            If self.merge_pairs is True, the tuple might be switched to match pairs.
+        'del_t1': float
+            The unwrapped first time interval computed as
+            >>> df['rx2'] - ['tx1']
+        'del_t2': float
+            The unwrapped second time interval computed as
+            >>> df['tx2'] - ['rx1']
+        'del_t3': float
+            The unwrapped third time interval computed as
+            >>> df['rx3'] - ['rx2']
+        'del_t4': float
+            The unwrapped fourth time interval computed as
+            >>> df['tx3'] - ['tx2']
+        'tof1': float
+            The unwrapped first time-of-flight measurement computed as
+            >>> df['rx1'] - ['tx1']
+        'tof2': float
+            The unwrapped second time-of-flight measurement computed as
+            >>> df['rx2'] - ['tx2']
+        'tof3': float
+            The unwrapped third time-of-flight measurement computed as
+            >>> df['rx3'] - ['tx3']
+        'sum_t1': float
+            The unwrapped first summed interval computed as
+            >>> df['rx2'] + ['tx1'] 
+        'sum_t2': float
+            The unwrapped second summed interval computed as
+            >>> df['tx2'] + ['rx1'] 
+
+    Examples
+    --------
+    # Read config file and corresponding data
+    config_file = 'config/ifo_3_drones_rosbag.config'
+
+    parser = ConfigParser(interpolation=ExtendedInterpolation())
+    parser.read(config_file)
+
+    machines = {}
+    for i,machine in enumerate(parser['MACHINES']):
+        machine_id = parser['MACHINES'][machine]
+        machines[machine_id] = RosMachine(parser, i)
+    
+    # Instantiate PostProcess
+    data = PostProcess(machines)
+
+    # Plot the evolution of the bias over time for ranging pair (1,3)
+    df_pair = data.df[data.df['pair'] == (1,3)]
+    plt.plot(df_pair['time'], df_pair['bias'])
     """
-    Object to process ROS bags and extract the timestamps and data for UwbCalibrate.
+    def __init__(
+        self, 
+        machines,
+        merge_pairs = False,
+    ) -> None:
+        """Constructor
 
-    PARAMETERS:
-    -----------
-    file_path:
-        Path of ROS bag relative to Python's working directory.
-    tag_ids: list[int]
-        List of tag IDs, in the order of tag attached to [tripod1, tripod2, tripod3].
-        Default: [1,2,3].
-    mult_twr: bool
-        Multiplicative protocol using double-sided TWR. Default: True.
-    num_meas: float
-        Number of measurements to process. -1 means no cap. Default: -1.
-
-    TODO 1: Check for missing rigid bodies when checking bag files.
-         2: Add tests.
-         3: Should I do all this in Pandas?
-    """
-
-    _c = 299702547 # speed of light
-    _to_ns = 1e9 * (1.0 / 499.2e6 / 128.0) # DW time unit to nanoseconds
-
-    def __init__(self, file_path, tag_ids, moment_arms, mult_twr=True, num_meas=-1, ranging_with_self=False):
+        Parameters
+        ----------
+        machines: list of Machine
+            A list of all the Machine objects, one per machine.
+        merge_pairs: bool, optional
+            If pairs are merged together irrespective of whom of the pair initiates, 
+            by default False
         """
-        Constructor.
+        self.merge_pairs = merge_pairs
+        self._save_params(machines)    
+        self._process_data(machines)
+
+    def _save_params(self, machines) -> None:
+        """Inherit some parameters from the Machine objects, and check for inconsistencies
+        between different machines.
+
+        Parameters
+        ----------
+        machines: list of Machine
+            A list of all the Machine objects, one per machine.
+
+        Raises
+        ------
+        Exception
+            Not all machines are using the same timestamping data types.
+        Exception
+            Not all machines are using the same clock rate.
+        Exception
+            Not all machines are using the same ranging protocol.
         """
-        self.file_path = file_path
-
-        self.tag_ids = tag_ids
-        self.moment_arms = moment_arms
-        self.mult_twr = mult_twr
-        self.num_meas = num_meas
-        self.ranging_with_self = ranging_with_self
-        
-        self.num_of_tags = sum([len(tag_ids[machine]) for machine in tag_ids])
-
-        self.r = [] # stores ground truth positions, per robot
-        self.phi = {} # stores ground truth rotation vectors, per robot
-        self._gt_distance = [] # stores ground truth distance between pairs
-        self.ts_data = {} # stores measured raw timestamps and power during ranging, per pair
-        self.time_intervals = {} # stores time intervals and power data, per pair
-
-        # Read and store the ROS bag using bagpy.
-        self.bag_data = bagreader(file_path)
-
-        self._preprocess_data()
-
-    def _preprocess_data(self):
-        """
-        Preprocess data. This is the main function.
-        """
-        self._store_gt_distance()
-        self._store_ts_data()
-        self._store_time_intervals()
-        self._interpolate_gt_to_uwb() 
-
-    def _store_gt_distance(self):
-        """
-        Stores the history of ground truth distance per pair.
-        """
-        t_sec, t_nsec, r, rot = self._extract_gt_data()
-        
-        # Store ground-truth position of every tag
-        self.r = r
-        self.rot = rot
-
-        # for machine in t_sec:
-        #     # Unwrap the clock
-        #     t_nsec[machine] = self._unwrap_gt(t_sec[machine], t_nsec[machine], 1e9)
+        # Retrieve information about the machines
+        self.machine_ids = []
+        self.tag_ids = {}
+        self.moment_arms = {}
+        for machine in machines:
+            self.machine_ids = self.machine_ids + [machine]
+            self.tag_ids[machine] = machines[machine].tag_ids
+            self.moment_arms.update(machines[machine].moment_arms)
             
-        self.t_r = t_nsec
+        # Retrieve the timestamping information
+        self.max_ts_value = machines[self.machine_ids[0]].max_ts_value
+        self.ts_to_ns = machines[self.machine_ids[0]].ts_to_ns
+            
+        # Retrieve the ranging protocol and what data is collected
+        self.ds_twr = machines[self.machine_ids[0]].ds_twr
+        self.fpp_exists = machines[self.machine_ids[0]].fpp_exists
+        self.rxp_exists = machines[self.machine_ids[0]].rxp_exists
+        self.std_exists = machines[self.machine_ids[0]].std_exists
         
-        # Store the ground-truth distance between pairs 
-        self._gt_distance = self._calculate_gt_distance(t_nsec)
-
-    def _extract_gt_data(self):
-        """
-        Extract the ground truth data from the ROS bag, as recorded by the Mocap system and 
-        streamed using VRPN.
-
-        RETURNS:
-        --------
-        t_sec: dict[int: np.array(n,)]
-            dict with the tag IDs as the keys. Contains recorded timestamps in seconds.
-        t_nsec: dict[int: np.array(n,)]
-            dict with the tag IDs as the keys. Contains recorded timestamps in nanoseconds.
-        r: dict[int: np.array(n,3)]
-            dict with the tag IDs as the keys. Contains recorded ground-truth position.
-        q: dict[int: np.array(n,3)]
-            dict with the tag IDs as the keys. Contains recorded ground-truth quaternion.
-        """
-
-        # Setting up the storage variables as dicts
-        t_sec = {lv0:np.empty(0) for lv0 in self.tag_ids.keys()}
-        t_nsec = {lv0:np.empty(0) for lv0 in self.tag_ids.keys()}
-        r = {lv0:np.empty(0) for lv0 in self.tag_ids.keys()}
-        rot = {lv0:[] for lv0 in self.tag_ids.keys()}
-
-        # Iterating tag by tag. 
-        for machine in self.tag_ids: 
-            # TODO: needs a big overhaul. We now have pose of drone not module, and a moment arm to module.
-            # Extracting the data streamed through VRPN.
-            topic = '/'+machine+'/vrpn_client_node/'+machine+'/pose'
-            data = self.bag_data.message_by_topic(topic)
-            data_pd = pd.read_csv(data)
-
-            # Timestamps.
-            t_sec[machine] = np.floor(data_pd["Time"])*0
-            t_nsec[machine] = data_pd["header.stamp.secs"] + data_pd["header.stamp.nsecs"]/1e9
+        for machine in machines:
+            # Check if any machine is using a different data type for timestamping
+            if machines[machine].max_ts_value != self.max_ts_value:
+                raise Exception(r"Not all machines are using the same timestamping data types.")
             
-            # Pose.
-            r[machine] = np.array((data_pd['pose.position.x'],
-                               data_pd['pose.position.y'],
-                               data_pd['pose.position.z']))
-            rot[machine] = R.from_quat(np.array([data_pd['pose.orientation.x'],
-                                           data_pd['pose.orientation.y'], 
-                                           data_pd['pose.orientation.z'], 
-                                           data_pd['pose.orientation.w']]).T)
-
-        return t_sec, t_nsec, r, rot
-
-    def _calculate_gt_distance(self, t):
-        """
-        Compute the ground-truth distance between pairs of tags from their ground-truth position.
-
-        PARAMETERS:
-        -----------
-        t: dict[int: np.array(n,)]
-            dict with the tag IDs as the keys. Contains recorded timestamps in nanoseconds.
-        r: dict[int: np.array(n,3)]
-            dict with the tag IDs as the keys. Contains recorded ground-truth position.
-
-        RETURNS:
-        --------
-        gt: dict[tuple: np.array(n,1)]
-            dict with the tag ID pairs as the keys. Contains computed ground-truth distances.
-        """
-        # All possible combinations of tags. Order does not matter.
-        tags = sum(list(self.tag_ids.values()),[])
+            # Check if any machine is using a different clock frequency
+            if machines[machine].ts_to_ns != self.ts_to_ns:
+                raise Exception(r"Not all machines are using the same clock rate.")
             
-        tag_pairs_all = combinations(tags,2)
-        if self.ranging_with_self:
-            self.tag_pairs_set = tag_pairs_all
-        else:
-            self.tag_pairs_set = [i for i in tag_pairs_all if [i[0],i[1]] not in self.tag_ids.values()]
+            # Check if any machine is using a different ranging protocol
+            if machines[machine].ds_twr != self.ds_twr:
+                raise Exception(r"Not all machines are using the same ranging protocol.")
+            
+            # Check if any machine does not record fpp, if so, 
+            # neglect fpp information for all machines
+            if machines[machine].fpp_exists != self.fpp_exists:
+                self.fpp_exists = False
+            
+            # Check if any machine does not record rxp, if so, 
+            # neglect rxp information for all machines
+            if machines[machine].rxp_exists != self.rxp_exists:
+                self.rxp_exists = False
+            
+            # Check if any machine does not record std, if so, 
+            # neglect std information for all machines
+            if machines[machine].std_exists != self.std_exists:
+                self.std_exists = False
 
-        gt = {(i,j):{"t":[],"dist":[]} for (i,j) in self.tag_pairs_set}
-        for pair in gt:
-            i = pair[0]
-            j = pair[1]
-            machine_i = [x for x in self.tag_ids.keys() if i in self.tag_ids[x]][0]
-            machine_j = [x for x in self.tag_ids.keys() if j in self.tag_ids[x]][0]
+    def _process_data(self, machines) -> None:
+        """Store the pose and UWB data locally and do all necessary processing.
 
-            # Interpolate the measurements of Tag j to the timestamps of Tag i.
-            r_j_interp = self._interpolate(self.r[machine_j], t[machine_j], t[machine_i])
-            q_j_interp = self._interpolate(self.rot[machine_j].as_quat().T, t[machine_j], t[machine_i]).T
-            rot_j_interp = R.from_quat(np.array([q_j_interp[:,0],
-                                                 q_j_interp[:,1], 
-                                                 q_j_interp[:,2], 
-                                                 q_j_interp[:,3]]).T)
-            gt[pair]["t"] = t[machine_i]
-
-            # Find moment arms
-            idx_i = self.tag_ids[machine_i].index(i)
-            idx_j = self.tag_ids[machine_j].index(j)
-            arm_i = self.moment_arms[machine_i][idx_i]
-            arm_j = self.moment_arms[machine_j][idx_j]
-
-            # Compute the distance between the tags.
-            num_of_meas = t[machine_i].size
-            gt[pair]["dist"] = np.zeros(num_of_meas,)
-            C_ai = self.rot[machine_i].as_dcm()
-            C_aj = rot_j_interp.as_dcm()
-            for k in range(num_of_meas):
-                gt[pair]["dist"][k] = np.linalg.norm(C_ai[k] @ arm_i
-                                                     + self.r[machine_i][:,k]
-                                                     - r_j_interp[:,k]
-                                                     - C_aj[k] @ arm_j)
-
-        return gt
-
-    def _store_ts_data(self):
+        Parameters
+        ----------
+        machines: list of Machine
+            A list of all the Machine objects, one per machine.
         """
-        Stores the history of raw timestamp and power measurements, per pair.
-        """
-        temp_dict = self._extract_ts_data()
-        self.ts_data.update(temp_dict)
-
-    def _extract_ts_data(self):
-        """
-        Extract the raw data from the ROS bag, as recorded by the devices connected to the
-        UWB tags.
-
-        RETURNS:
-        --------
-        ts_data: dict[tuple: np.array(n,1)]
-            dict with the tag ID pairs as the keys. Contains measured raw timestamps and power.
-        """
-
-        # Setting up the storage variable as a dict
-        ts_data = {}
-
-        # Iterating device by device.
-        for machine in self.tag_ids.keys():
-            # Extracting the data recorded by the device.
-            topic = '/' + machine + '/uwb/range'
-            data = self.bag_data.message_by_topic(topic)
-            data_pd = pd.read_csv(data)
-
-            # Iterating through the data row by row. # TODO: replace this for loop
-            for idx, row in data_pd.iterrows():
-                if self.num_meas != -1 and idx >= self.num_meas:
-                    break
-
-                initiator_id = row["from_id"]
-                target_id = row["to_id"]
-                pair = (initiator_id, target_id)
-
-                # Ignore unexpected measurements
-                if (pair not in self.tag_pairs_set) and (pair[::-1] not in self.tag_pairs_set):
-                    continue
-
-                # Ignore measurement-at-target
-                if (initiator_id not in self.tag_ids[machine]):
-                    continue
-
-                temp = np.array([row["header.stamp.secs"] + row["header.stamp.nsecs"]/1e9,
-                                 np.floor(row["Time"])*0,
-                                 row["range"],
-                                 row["tx1"]*self._to_ns,
-                                 row["rx1"]*self._to_ns,
-                                 row["tx2"]*self._to_ns,
-                                 row["rx2"]*self._to_ns,
-                                 row["tx3"]*self._to_ns,
-                                 row["rx3"]*self._to_ns,
-                                 row["fpp1"],
-                                 row["fpp2"],
-                                 row["rxp1"],
-                                 row["rxp2"],
-                                 row["std1"],
-                                 row["std2"]])
-
-                # Initialize this pair if not already part of the dict
-                if pair not in ts_data:
-                    ts_data[pair] = np.empty((0,15)) # TODO: automate number of columns
-
-                ts_data[pair] = np.vstack((ts_data[pair], temp))
-
-        # TODO: should make ts_data of the same form as time_intervals (i.e., a nested dict)
-        self.range_idx = 2
-        self.tx1_idx = 3
-        self.rx1_idx = 4
-        self.tx2_idx = 5
-        self.rx2_idx = 6
-        self.tx3_idx = 7
-        self.rx3_idx = 8
-        self.fpp1_idx = 9
-        self.fpp2_idx = 10
-        self.rxp1_idx = 11
-        self.rxp2_idx = 12
-        self.std1_idx = 13
-        self.std2_idx = 14
-
-        self.tag_pairs = list(ts_data.keys())
-
-        return ts_data
-
-    def _store_time_intervals(self):
-        """
-        Stores the history of time intervals and power measurements, per pair.
-        """
+        self._store_uwb_data(machines)
+        
+        self._store_pose_data(machines)
+        self._store_distance_data()
+        
+        self._get_pairs()
+        
         self._unwrap_all_clocks()
-        for pair in self.tag_pairs: 
-            temp_dict = self._retrieve_time_intervals(pair)
-            self.time_intervals.update({pair:temp_dict})
-
-    def _retrieve_time_intervals(self, pair):
-        """
-        Compute the time intervals from the recorded timestamps.
-
-        PARAMETERS:
-        -----------
-        pair: tuple
-            A tuple with the (inititating tag, target_tag).
-
-        RETURNS:
-        --------
-        intervals: dict[tuple: np.array(n,1)]
-            dict with the tag ID pairs as the keys. Contains computed time intervals and power.
-        """
-        ts = self.ts_data[pair]
-
-        intervals = {}
-
-        intervals["t"] = ts[:,0]
-        intervals["dt"] = ts[1:,0] - ts[:-1,0]
-        intervals["dt"] = np.hstack(([0], intervals["dt"]))
-        intervals["Ra1"] = ts[:,self.rx2_idx] - ts[:,self.tx1_idx]
-        intervals["Ra2"] = ts[:,self.rx3_idx] - ts[:,self.rx2_idx]
-        intervals["Db1"] = ts[:,self.tx2_idx] - ts[:,self.rx1_idx]
-        intervals["Db2"] = ts[:,self.tx3_idx] - ts[:,self.tx2_idx]
-        intervals["tof1"] = ts[:,self.rx1_idx] - ts[:,self.tx1_idx]
-        intervals["tof2"] = ts[:,self.rx2_idx] - ts[:,self.tx2_idx]
-        intervals["tof3"] = ts[:,self.rx3_idx] - ts[:,self.tx3_idx]
-        intervals["S1"] = ts[:,self.rx2_idx] + ts[:,self.tx1_idx]
-        intervals["S2"] = ts[:,self.tx2_idx] + ts[:,self.rx1_idx]
-
-        return intervals
-
-    ### ------------------------ INTERPOLATION METHODS ------------------------ ###
-    def _interpolate_gt_to_uwb(self):
-        """
-        Interpolate the computed ground truth distance to the timestamps where measurements 
-        were recorded.
-        """
-        for i,pair in enumerate(self.tag_pairs):
-            t_new = self.time_intervals[pair]["t"]
-            try:
-                r = self._gt_distance[pair]["dist"]
-                t_old = self._gt_distance[pair]["t"]
-            except:
-                r = self._gt_distance[pair[::-1]]["dist"]
-                t_old = self._gt_distance[pair[::-1]]["t"]
-            
-            f = interp1d(t_old, r, kind='linear', fill_value='extrapolate')
-
-            self.time_intervals[pair].update({'r_gt': f(t_new)})
-            
-            # try:
-            #     self._gt_distance[pair]['t'] = t_new
-            #     self._gt_distance[pair]['dist'] = f(t_new)
-            # except:
-            #     self._gt_distance[pair[::-1]]['t'] = t_new
-            #     self._gt_distance[pair[::-1]]['dist'] = f(t_new)
-            
-    @staticmethod
-    def _interpolate(x, t_old, t_new):
-        """
-        Interpolate ground truth position.
-
-        PARAMETERS:
-        -----------
-        r: np.array(n,3)
-            Recorded ground-truth position at t_old.
-        t_old: np.array(n,)
-            The timestamps of the recorded ground-truth position.
-        t_new: np.array(n,)
-            The new keypoints for interpolation.
-
-        RETURNS:
-        --------
-        f(t_new): np.array(n,3)
-            Recorded ground-truth position interpolated at t_new.
-        """
+        self._compute_intervals()
         
-        f = interp1d(t_old, x, kind='linear', fill_value='extrapolate')
+        # If pairs are to be merged, combine flipped pair tuples by sorting.
+        if self.merge_pairs:
+            self.df['pair'] = self.df['pair'].apply(sorted)
+            self.pair_list = list(self.df['pair'].unique())
 
-        return f(t_new)
+    def _store_uwb_data(self, machines) -> None:
+        """Get and store UWB data locally.
+
+        Parameters
+        ----------
+        machines: list of Machine
+            A list of all the Machine objects, one per machine.
+        """
+        # Get UWB data from all machines
+        all_dfs = []
+        for machine in machines:
+            all_dfs = all_dfs + [machines[machine].df_uwb]
+
+        # Combine dataframes into one local dataframe
+        self.df = pd.concat(all_dfs)
+        self.df.sort_values(by=['time'] , inplace=True)
+        self.df.reset_index(inplace=True, drop=True)
+    
+    def _store_pose_data(self, machines) -> None:
+        """Get and store pose data locally.
+
+        Parameters
+        ----------
+        machines: list of Machine
+            A list of all the Machine objects, one per machine.
+        """
+        # Get timestamps of UWB measurements
+        t_new = self.df["time"]
+
+        # Address one machine at a time
+        for machine in machines:
+            # Get pose data for this machine
+            t = np.array(machines[machine].df_pose['time'].to_list())
+            r_iw_a = np.array(machines[machine].df_pose['r_iw_a'].to_list())
+            q_ai = np.array(machines[machine].df_pose['q_ai'].to_list())
+             
+            # Interpolate pose data to UWB timestamps and save into main dataframe
+            self.df['r_iw_a_'+machine] = list(interpolate(r_iw_a, t, t_new))
+            self.df['q_ai_'+machine] = list(interpolate(q_ai, t, t_new))
+            
+    def _store_distance_data(self) -> None:
+        """Get and store distance between tags from the ground-truth poses.
+        """
+        # Compute and store the ground-truth range.
+        self.df['gt_range'] = self.df.apply(
+            self._compute_distance, 
+            args=(self.tag_ids, self.moment_arms), 
+            axis=1
+        )
+
+        # Compute and store the range bias.
+        self.df['bias'] = self.df.apply(
+            self._get_bias, 
+            axis=1
+        )
+        
+        
+    @staticmethod
+    def _compute_distance(
+        row, 
+        tag_ids, 
+        moment_arms
+    ) -> float:
+        """Compute the distance between two tags at one instant.
+
+        Parameters
+        ----------
+        row: pd.dataframe
+            One row corresponding to one measurement. This must include 
+            the following headers:
+                ['from_id', 'to_id', 'r_iw_a_*', 'q_ai_*']
+        tag_ids: dict
+            keys: str
+                The ID of the machine.
+            values: list of int
+                The IDs of the tag installed on this machine.
+        moment_arms: dict
+            keys: int
+                The ID of the tag
+            values: list
+                The 3D position of the tag relative to the machine's reference point,
+                in the machine's body frame.
+
+        Returns
+        -------
+        float
+            Computed ground-truth range for this measurement.
+        """
+        # Get the IDs of the ranging tags
+        id0 = row['from_id']
+        id1 = row['to_id']
+        
+        # Get the IDs of the machines that have those two tags
+        machine0 = [machine for machine in tag_ids \
+                            if id0 in tag_ids[machine]][0]
+        machine1 = [machine for machine in tag_ids \
+                            if id1 in tag_ids[machine]][0]
+        
+        # Get the pose of the first machine
+        r_0w_a = row['r_iw_a_'+machine0]
+        q_a0 = row['q_ai_'+machine0]
+        C_a0 = SO3.from_quat(q_a0, order='xyzw')
+        
+        # Get the position of the tag of the first machine relative to its reference point
+        r_t0_0 = moment_arms[id0]
+        
+        # Get the pose of the second machine
+        r_1w_a = row['r_iw_a_'+machine1]
+        q_a1 = row['q_ai_'+machine1]
+        C_a1 = SO3.from_quat(q_a1, order='xyzw')
+
+        # Get the position of the tag of the second machine relative to its reference point
+        r_t1_1 = moment_arms[id1]
+        
+        # Return the distance between the two tags.
+        return np.linalg.norm(
+            C_a0 @ r_t0_0
+            + r_0w_a
+            - r_1w_a
+            - C_a1 @ r_t1_1
+        )
+        
+    @staticmethod 
+    def _get_bias(df) -> float:
+        """Get the ranging bias.
+
+        Parameters
+        ----------
+        df: pd.dataframe
+            Dataframe containing range and ground truth range (gt_range).
+
+        Returns
+        -------
+        pd.dataframe
+            The computed bias.
+        """
+        return df['range'] - df['gt_range']
+
+    def _get_pairs(self) -> None:
+        """Save the ranging pair for every measurement, and get a list of all unique
+        ranging pairs.
+        """
+        self.df['pair'] = tuple(zip(self.df.from_id, self.df.to_id))
+        self.pair_list = list(self.df['pair'].unique())
+    
+    def _compute_intervals(self) -> None:
+        """Compute the timestamp intervals.
+        """
+        self.df["del_t1"] = self.df['rx2'] - self.df['tx1']
+        self.df["del_t2"] = self.df['tx2'] - self.df['rx1']
+        if self.ds_twr:
+            self.df["del_t3"] = self.df['rx3'] - self.df['rx2']
+            self.df["del_t4"] = self.df['tx3'] - self.df['tx2']
+        
+        self.df["tof1"] = self.df['rx1'] - self.df['tx1']
+        self.df["tof2"] = self.df['rx2'] - self.df['tx2']
+        if self.ds_twr:
+            self.df["tof3"] = self.df['rx3'] - self.df['tx3']
+
+        self.df["sum_t1"] = self.df['rx2'] + self.df['tx1']
+        self.df["sum_t2"] = self.df['tx2'] + self.df['rx1']
+
     ### ------------------------------------------------------------------------ ###
 
 
     ### -------------------------- UNWRAPPING METHODS -------------------------- ###
-    def _unwrap_all_clocks(self):
+    def _unwrap_all_clocks(self) -> None:
+        """Unwrap all timestamps, one at a time. 
         """
-        Unwrap the clock for all the time-stamp measurements.
-        """
-        ### --- Unwrap dt --- ###
-        # Timestamps are represented as uint32
-        max_time_ns = 2**32 * self._to_ns
+        # Find the maximum timestamp value before unwrapping, in nanoseconds 
+        max_ts_ns = self.max_ts_value * self.ts_to_ns
 
-        ### --- Unwrap time-stamps --- ###
-        for pair in self.tag_pairs: 
+        for pair in self.pair_list: 
+            df_iter = self.df[self.df['pair']==pair].copy()
+            
             iter_rx2 = 0
             iter_tx2 = 0
             iter_tx3 = 0
             iter_rx3 = 0
+            
             # Check if a clock wrap occured at the first measurement, and unwrap
-            if self.ts_data[pair][:,self.rx2_idx][0] < self.ts_data[pair][:,self.tx1_idx][0]:
-                self.ts_data[pair][:,self.rx2_idx][0] + max_time_ns
+            if df_iter['rx2'].iloc[0] < df_iter['tx1'].iloc[0]:
+                df_iter.at[0,'rx2'] += max_ts_ns
                 iter_rx2 = 1
                 iter_rx3 = 1
-
-            if self.ts_data[pair][:,self.tx2_idx][0] < self.ts_data[pair][:,self.rx1_idx][0]:
-                self.ts_data[pair][:,self.tx2_idx][0] + max_time_ns
+                
+            if df_iter['tx2'].iloc[0] < df_iter['rx1'].iloc[0]:
+                df_iter.at[0,'tx2'] += max_ts_ns
                 iter_tx2 = 1
                 iter_tx3 = 1
 
-            if self.ts_data[pair][:,self.tx3_idx][0] < self.ts_data[pair][:,self.tx2_idx][0]:
-                self.ts_data[pair][:,self.tx3_idx][0] + max_time_ns
-                iter_tx3 = 1
+            if self.ds_twr:
+                if df_iter['tx3'].iloc[0] < df_iter['tx2'].iloc[0]:
+                    df_iter.at[0,'tx3'] += max_ts_ns
+                    iter_tx3 = 1
 
-            if self.ts_data[pair][:,self.rx3_idx][0] < self.ts_data[pair][:,self.rx2_idx][0]:
-                self.ts_data[pair][:,self.rx3_idx][0] + max_time_ns
-                iter_rx3 = 1
+                if df_iter['rx3'].iloc[0] < df_iter['rx2'].iloc[0]:
+                    df_iter.at[0,'rx3'] += max_ts_ns
+                    iter_rx3 = 1
 
             # Individual unwraps
-            # self.ts_data[pair][:,0] \
-            #     = self._unwrap_gt(self.ts_data[pair][:,1], self.ts_data[pair][:,0], 1e9)
+            df_iter['tx1'] = self._unwrap(df_iter['tx1'], max_ts_ns)
+            df_iter['rx1'] = self._unwrap(df_iter['rx1'], max_ts_ns)
+            df_iter['tx2'] = self._unwrap(df_iter['tx2'], max_ts_ns, iter=iter_tx2)
+            df_iter['rx2'] = self._unwrap(df_iter['rx2'], max_ts_ns, iter=iter_rx2)
+            if self.ds_twr:
+                df_iter['tx3'] = self._unwrap(df_iter['tx3'], max_ts_ns, iter=iter_tx3)
+                df_iter['rx3'] = self._unwrap(df_iter['rx3'], max_ts_ns, iter=iter_rx3)
             
-            self.ts_data[pair][:,self.tx1_idx] \
-                = self._unwrap(self.ts_data[pair][:,self.tx1_idx], max_time_ns)
-
-            self.ts_data[pair][:,self.rx1_idx] \
-                = self._unwrap(self.ts_data[pair][:,self.rx1_idx], max_time_ns)
-
-            self.ts_data[pair][:,self.tx2_idx] \
-                = self._unwrap(self.ts_data[pair][:,self.tx2_idx], max_time_ns, iter=iter_tx2)
-
-            self.ts_data[pair][:,self.rx2_idx] \
-                = self._unwrap(self.ts_data[pair][:,self.rx2_idx], max_time_ns, iter=iter_rx2)
-
-            self.ts_data[pair][:,self.tx3_idx] \
-                = self._unwrap(self.ts_data[pair][:,self.tx3_idx], max_time_ns, iter=iter_tx3)
-
-            self.ts_data[pair][:,self.rx3_idx] \
-                = self._unwrap(self.ts_data[pair][:,self.rx3_idx], max_time_ns, iter=iter_rx3)
+            # 
+            self.df[self.df['pair']==pair] = df_iter
 
     @staticmethod
-    def _unwrap(data, max, iter=0):
-        """
-        Unwraps data. 
+    def _unwrap(
+        data, 
+        max, 
+        iter=0
+    ) -> np.ndarray:
+        """Unwrap one clock.
 
-        PARAMETERS:
-        -----------
-        data: np.array(n,)
-            Data to be unwrapped.
+        Parameters
+        ----------
+        data: pd.dataframe
+            Data corresponding to one clock.
         max: float
-            Max value of the data where the wrapping occurs.
+            The maximum timestamp value before unwrapping, in nanoseconds.
+        iter: int, optional
+            Number of times unwrapping occurred at the first measurement, by default 0.
 
-        RETURNS:
-        --------
-        data: np.array(n,)
-            Unwrapped data.
+        Returns
+        -------
+        np.ndarray
+            Unwrapped timestamps.
         """
+        # Convert to np.ndarray
+        data = np.array(data)
+        
+        # Find indices associated with negative deltas.
         temp = data[1:] - data[:-1]
         idx = np.concatenate([np.array([0]), temp < 0])
 
-        # iter = 0
+        # Unwrap by adding the max value whenever a negative delta occurs.
         for lv0, _ in enumerate(data):
             if idx[lv0]:
                 iter += 1
             data[lv0] += iter*max    
 
         return data
+    ### ------------------------------------------------------------------------ ###
+    
+    ### -------------------------- GET PARAMS METHODS -------------------------- ###
+    def get_machine_pos(
+        self, 
+        machine_id, 
+        as_numpy = False
+    ) -> np.ndarray:
+        """Get the position of a machine over time. 
 
-    @staticmethod
-    def _unwrap_gt(t_sec, t_nsec, max):
+        Parameters
+        ----------
+        machine_id: str
+            The ID of the machine whose position we want.
+        as_numpy: bool, optional
+            Return data as np.ndarray rather than pd.dataframe, by default False
+
+        Returns
+        -------
+        pd.dataframe or np.ndarray
+            Returns a list of the position of the machine over time.
+            If as_numpy = False (default), return pd.dataframe,
+            else, return np.ndarray.
         """
-        Unwraps ground truth timestamps.
-        
-        PARAMETERS:
-        -----------
-        t_sec: np.array(n,)
-            Timestamps in seconds.
-        t_nsec: np.array(n,)
-            Timestamps in nanoseconds.
-        max: float
-            Max value of the data where the wrapping occurs.
+        if as_numpy:
+            return np.vstack(self.df['r_iw_a_' + machine_id])
+        else:
+            return self.df['r_iw_a_' + machine_id]
 
-        RETURNS:
-        --------
-        t_nsec: np.array(n,)
-            Unwrapped timestamps in nanoseconds.
-        """
-        iter = 0
-        for lv0 in range(len(t_nsec)-1):
-            if t_sec[lv0+1] - t_sec[lv0] > 0:
-                iter += t_sec[lv0+1] - t_sec[lv0]
-            t_nsec[lv0+1] += iter*max    
-
-        return t_nsec
     ### ------------------------------------------------------------------------ ###
 
-
     ### --------------------------- PLOTTING METHODS --------------------------- ###
-    def _ss_twr_plotting(self, pair):
-        """
-        Plot the single-sided TWR range measurements.
 
-        PARAMETERS:
-        -----------
-        pair: tuple
-            A tuple with the (inititating tag, target_tag).
-        """
-        range = 0.5 * self._c / 1e9 * \
-            (self.time_intervals[pair]["Ra1"] - self.time_intervals[pair]["Db1"])
-
-        fig, axs = plt.subplots(1)
-
-        axs.plot(self.time_intervals[pair]["t"]/1e9, range, label='Range Measurements')
-        axs.scatter(self.time_intervals[pair]["t"]/1e9, 
-                    self.time_intervals[pair]["r_gt"], 
-                    s=1,
-                    label='Ground Truth')
-        
-        axs.set_ylabel("Distance [m]")
-        axs.set_xlabel("t [s]")
-        axs.set_ylim([-1, 5])
-
-        axs.legend()
-
-    def _ds_twr_plotting(self, pair):
-        """
-        Plot the double-sided TWR range measurements.
-
-        PARAMETERS:
-        -----------
-        pair: tuple
-            A tuple with the (inititating tag, target_tag).
-        """
-        range = 0.5 * self._c / 1e9 * \
-            (self.time_intervals[pair]["Ra1"] - (self.time_intervals[pair]["Ra2"] \
-                / self.time_intervals[pair]["Db2"]) * self.time_intervals[pair]["Db1"])
-
-        fig, axs = plt.subplots(1)
-
-        axs.scatter(self.time_intervals[pair]["t"]/1e9, range, 
-                    s=1, label='Range Measurements')
-        axs.plot(self.time_intervals[pair]["t"]/1e9, \
-                    self.time_intervals[pair]["r_gt"], \
-                    label='Ground Truth', color='r')
-
-        axs.set_ylabel("Distance [m]")
-        axs.set_xlabel("t [s]")
-        axs.set_ylim([-1, 5])
-
-        axs.legend()
-
-    @staticmethod
-    def lift(x, alpha=-82):
-        """
-        Lifting function for better visualization and calibration. 
-        Based on Cano, J., Pages, G., Chaumette, E., & Le Ny, J. (2022). Clock 
-                 and Power-Induced Bias Correction for UWB Time-of-Flight Measurements.
-                 IEEE Robotics and Automation Letters, 7(2), 2431-2438. 
-                 https://doi.org/10.1109/LRA.2022.3143202
-
-        PARAMETERS:
-        -----------
-        x: np.array(n,1)
-            Input to lifting function. Received Power in dBm in this context.
-        alpha: scalar
-            Centering parameter. Default: -82 dBm.
-
-        RETURNS:
-        --------
-        intervals: dict[tuple: np.array(n,1)]
-            dict with the tag ID pairs as the keys. Contains computed time intervals and power.
-        """
-        return 10**((x - alpha) /10)
-
-    def visualize_raw_data(self, pair=(1,2), alpha=-82):
-        """
-        Generates multiple plots to visualize the raw data. 
-        
-        PARAMETERS:
-        -----------
-        pair: tuple
-            A tuple with the (inititating tag, target_tag).
-        alpha: scalar
-            Centering parameter. Default: -82 dBm.
-        """
-        interv = self.time_intervals[pair]
-        Pr = {}
-        Pr["fpp1"] = self.ts_data[pair][:,self.fpp1_idx]
-        Pr["fpp2"] = self.ts_data[pair][:,self.fpp2_idx]
-        bias = self.ts_data[pair][:,self.range_idx] - interv["r_gt"]
-
-        # Axes limits
-        bias_l = -0.5
-        bias_u = 0.5
-        Pr_l = -110
-        Pr_h = -80
-
-        ### --- RANGE MEASUREMENTS --- ###
-        if self.mult_twr:
-            self._ds_twr_plotting(pair)
-        else:
-            self._ss_twr_plotting(pair)
-
-        ### --- TIME INTERVALS --- ###
-        fig, axs = plt.subplots(3,3)
-
-        col_num = 0
-        row_num = 0
-        for interv_str in interv:
-            if interv_str == "dt" or interv_str == "t" or interv_str == "r_gt":
-                continue
-            interv_data = interv[interv_str]
-            axs[row_num,col_num].plot(interv["t"]/1e9,interv_data)
-            axs[row_num,col_num].set_ylabel(interv_str + " [ns]")
-            axs[row_num,col_num].set_xlabel("t [s]")
-
-            if col_num == 2:
-                row_num += 1
-                col_num = 0
-            else:
-                col_num += 1
-
-        ### --- POWER VS BIAS --- ###
-        fig, axs = plt.subplots(len(Pr))
-
-        for i, Pr_str in enumerate(Pr):
-            Pr_iter = Pr[Pr_str]
-            axs[i].scatter(self.lift(Pr_iter),bias,s=1)
-            axs[i].set_ylabel("Bias [m]")
-            axs[i].set_xlabel("$f("+ Pr_str + ")$ [dBm]")
-            # axs[i].set_xlim([self.lift(Pr_l), self.lift(Pr_h)])
-            # axs[i].set_ylim([bias_l, bias_u])
-
-        ### --- BIAS AND POWER vs. TIME --- ###
-        fig, axs = plt.subplots(3)
-
-        axs[0].scatter(interv["t"]/1e9,bias, s=1)
-        axs[0].set_ylabel("Bias [m]")
-        # axs[0].set_ylim([bias_l, bias_u])
-
-        for i, Pr_str in enumerate(Pr):
-            Pr_iter = Pr[Pr_str]
-            axs[i+1].plot(interv["t"]/1e9,Pr_iter)
-            axs[i+1].set_ylabel(Pr_str + " [dBm]")
-            axs[i+1].set_ylim([Pr_l, Pr_h])
-
-        axs[i+1].set_xlabel("t [s]")
     ### ------------------------------------------------------------------------ ###

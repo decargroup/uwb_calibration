@@ -1,5 +1,4 @@
 # %%
-from turtle import position
 from pyuwbcalib.uwbcalibrate import UwbCalibrate
 from pyuwbcalib.postprocess import PostProcess
 import matplotlib
@@ -126,7 +125,8 @@ if antenna_delay:
 # %% Power calibration
 if power_calib:
     # calib_obj.fit_model(std_window=50, chi_thresh=16.8, merge_pairs=True)
-    calib_obj.fit_model(std_window=25, chi_thresh=22.8, merge_pairs=True)
+    calib_obj.fit_power_model(std_window=25, 
+                              thresh={'bias': 0.3, 'std': 3},)
 
     # bias_fit, std_fit = calib_obj.get_average_model()
 

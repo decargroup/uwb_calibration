@@ -13,3 +13,10 @@ doc/LOS_bias/figs/standard_twr-eps-converted-to.pdf
 pyuwbcalib.egg-info/
 doc/icra2023
 figs
+writeups
+pyuwbcalib/__init__.pyc
+.vscode
+calib_results.pickle
+data.pickle
+scripts/.ipynb_checkpoints
+docs/build

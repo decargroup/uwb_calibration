@@ -19,7 +19,7 @@ class ComputeCorrectedRange(object):
             self._dwt_to_ns = 1
 
         # Retrieve pre-determined calibration results
-        with open("calib_results_new.pickle", 'rb') as pickle_file:
+        with open("calib_results.pickle", 'rb') as pickle_file:
             calib_results = pickle.load(pickle_file)
         
         self.delays = calib_results['delays']
