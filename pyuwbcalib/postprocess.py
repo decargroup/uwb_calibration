@@ -257,6 +257,8 @@ class PostProcess(object):
         self._compute_intervals()
         
         # If pairs are to be merged, combine flipped pair tuples by sorting.
+        # Note that this has to be done AFTER clock unwrapping.
+        # TODO: could make this more robust to the above point.
         if self.merge_pairs:
             self.df['pair'] = self.df['pair'].apply(sorted)
             self.pair_list = list(self.df['pair'].unique())
@@ -316,7 +318,9 @@ class PostProcess(object):
     
     def _match_tx_ts(self, row):
         """Find the row in df_uwb corresponding to a single entry in df_passive.
-        # TODO: Speed up this timestamp matching process
+        # TODO: Speed up this timestamp matching process to be able to efficiently \
+            compare multiple timestamps. I now reverted to only one timestamp because \
+            it is incredibly slow otherwise.
 
         Parameters
         ----------
@@ -330,19 +334,20 @@ class PostProcess(object):
         """
         # Get all timestamps that must overlap between the two dataframes.
         t1 = row['tx1_n']
-        t2 = row['tx2_n']
-        t3 = row['tx3_n']
-        r1 = row['rx1_n']
-        r2 = row['rx2_n']
-        r3 = row['rx3_n']
+        # t2 = row['tx2_n']
+        # t3 = row['tx3_n']
+        # r1 = row['rx1_n']
+        # r2 = row['rx2_n']
+        # r3 = row['rx3_n']
         
         # Extract the index of the corresponding row. 
-        index = self.df[(self.df['tx1'] == t1) 
-                        & (self.df['tx2'] == t2) 
-                        & (self.df['tx3'] == t3)
-                        & (self.df['rx1'] == r1)
-                        & (self.df['rx2'] == r2)
-                        & (self.df['rx3'] == r3)].index 
+        # index = self.df[(self.df['tx1'] == t1) 
+        #                 & (self.df['tx2'] == t2) 
+        #                 & (self.df['tx3'] == t3)
+        #                 & (self.df['rx1'] == r1)
+        #                 & (self.df['rx2'] == r2)
+        #                 & (self.df['rx3'] == r3)].index 
+        index = self.df[(self.df['tx1'] == t1)].index 
 
         # If there is no overlap, return None
         if not len(index):
@@ -472,7 +477,7 @@ class PostProcess(object):
 
     def _get_pairs(self) -> None:
         """Save the ranging pair for every measurement, and get a list of all unique
-        ranging pairs.
+        ranging pairs. This returns both (x,y) and (y,x).
         """
         self.df['pair'] = tuple(zip(self.df.from_id, self.df.to_id))
         self.pair_list = list(self.df['pair'].unique())
@@ -501,12 +506,13 @@ class PostProcess(object):
     ### -------------------------- UNWRAPPING METHODS -------------------------- ###
     def _unwrap_all_clocks(self) -> None:
         """Unwrap all timestamps, one at a time. 
-        # TODO: Unwrap using the new way where we use the laptop timestamps.
-        # TODO: Need to unwrap passive listening measurements as well. We have corresponding indices.
+        # TODO: It might be significantly faster to group together ALL recordings of one clock \
+            (initiate, target, and passive) and unwrap all of them together.
         """
         # Find the maximum timestamp value before unwrapping, in nanoseconds 
         max_ts_ns = self.max_ts_value * self.ts_to_ns
 
+        ### Unwrap TWR timestamps
         for pair in self.pair_list: 
             df_iter = self.df[self.df['pair']==pair].copy()
             
@@ -544,8 +550,45 @@ class PostProcess(object):
                 df_iter['tx3'] = self._unwrap(df_iter['tx3'], max_ts_ns, iter=iter_tx3)
                 df_iter['rx3'] = self._unwrap(df_iter['rx3'], max_ts_ns, iter=iter_rx3)
             
+            df_iter = self._long_interval_unwrap(df_iter, max_ts_ns)
+
             # 
             self.df[self.df['pair']==pair] = df_iter
+
+        if self.passive_listening:
+            ### Unwrap passive timestamps
+
+            all_tags = np.concatenate([self.tag_ids[machine] for machine in self.machine_ids])
+            for tag in all_tags: 
+                df_iter = self.df_passive[self.df_passive['my_id']==tag].copy()
+                iter_rx2 = 0
+                iter_rx3 = 0
+                
+                # Check if a clock wrap occured at the first measurement, and unwrap
+                if df_iter['rx2'].iloc[0] < df_iter['rx1'].iloc[0]:
+                    df_iter.at[0,'rx2'] += max_ts_ns
+                    iter_rx2 = 1
+                    iter_rx3 = 1
+
+                if self.ds_twr:
+                    if df_iter['rx3'].iloc[0] < df_iter['rx2'].iloc[0]:
+                        df_iter.at[0,'rx3'] += max_ts_ns
+                        iter_rx3 = 1
+
+                # Individual unwraps
+                df_iter['rx1'] = self._unwrap(df_iter['rx1'], max_ts_ns)
+                df_iter['rx2'] = self._unwrap(df_iter['rx2'], max_ts_ns, iter=iter_rx2)
+                if self.ds_twr:
+                    df_iter['rx3'] = self._unwrap(df_iter['rx3'], max_ts_ns, iter=iter_rx3)
+                
+                df_iter = self._long_interval_unwrap(
+                    df_iter, 
+                    max_ts_ns,
+                    passive = True,
+                )
+
+                # 
+                self.df_passive[self.df_passive['my_id']==tag] = df_iter
 
     @staticmethod
     def _unwrap(
@@ -553,7 +596,7 @@ class PostProcess(object):
         max, 
         iter=0
     ) -> np.ndarray:
-        """Unwrap one clock.
+        """Unwrap one clock by finding instances where the timestamp decreases.
 
         Parameters
         ----------
@@ -583,6 +626,58 @@ class PostProcess(object):
             data[lv0] += iter*max    
 
         return data
+
+    @staticmethod
+    def _long_interval_unwrap(
+        df: pd.DataFrame, 
+        max: float, 
+        passive: bool = False,
+    ) -> np.ndarray:
+        """Unwrap one clock by finding instances where the passage of time between two
+        readings of this clock is longer than the period of the clock.
+
+        Parameters
+        ----------
+        data: pd.dataframe
+            Data corresponding to one clock.
+        max: float
+            The maximum timestamp value before unwrapping, in nanoseconds.
+        passive: bool, optional
+            If the timestamps are those of passive listening measurements, by default False.
+
+        Returns
+        -------
+        np.ndarray
+            Unwrapped timestamps.
+        """
+        # Need to first reindex the dataframe 
+        df.reset_index(inplace=True)
+        mult_wrap_idx = df.index[df['time'].diff()>0.065].tolist()
+
+        for idx in mult_wrap_idx:
+            dt = df.iloc[idx]['time'] - df.iloc[idx-1]['time']
+
+            if passive:
+                dt_rx1 = (df.iloc[idx]['rx1'] - df.iloc[idx-1]['rx1'])/1e9
+                n = np.round((dt - dt_rx1)/(max/1e9))
+                df.iloc[idx::]['rx1'] += n*max
+                df.iloc[idx::]['rx2'] += n*max
+                df.iloc[idx::]['rx3'] += n*max
+            else:
+                dt_tx1 = (df.iloc[idx]['tx1'] - df.iloc[idx-1]['tx1'])/1e9
+                n = np.round((dt - dt_tx1)/(max/1e9))
+                df.iloc[idx::]['tx1'] += n*max
+                df.iloc[idx::]['rx2'] += n*max
+                df.iloc[idx::]['rx3'] += n*max
+
+                dt_rx1 = (df.iloc[idx]['rx1'] - df.iloc[idx-1]['rx1'])/1e9
+                n = np.round((dt - dt_rx1)/(max/1e9))
+                df.iloc[idx::]['rx1'] += n*max
+                df.iloc[idx::]['tx2'] += n*max
+                df.iloc[idx::]['tx3'] += n*max
+
+        return df.set_index("index")
+
     ### ------------------------------------------------------------------------ ###
     
     ### -------------------------- GET PARAMS METHODS -------------------------- ###
