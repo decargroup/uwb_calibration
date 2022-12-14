@@ -123,6 +123,7 @@ class PostProcess(object):
         'sum_t2': float
             The unwrapped second summed interval computed as
             >>> df['tx2'] + ['rx1'] 
+    # TODO: add df_passive documentation.
 
     Examples
     --------
@@ -196,6 +197,7 @@ class PostProcess(object):
             
         # Retrieve the ranging protocol and what data is collected
         self.ds_twr = machines[self.machine_ids[0]].ds_twr
+        self.passive_listening = machines[self.machine_ids[0]].passive_listening
         self.fpp_exists = machines[self.machine_ids[0]].fpp_exists
         self.rxp_exists = machines[self.machine_ids[0]].rxp_exists
         self.std_exists = machines[self.machine_ids[0]].std_exists
@@ -203,15 +205,21 @@ class PostProcess(object):
         for machine in machines:
             # Check if any machine is using a different data type for timestamping
             if machines[machine].max_ts_value != self.max_ts_value:
-                raise Exception(r"Not all machines are using the same timestamping data types.")
+                raise Exception(
+                    r"Not all machines are using the same timestamping data types."
+                )
             
             # Check if any machine is using a different clock frequency
             if machines[machine].ts_to_ns != self.ts_to_ns:
-                raise Exception(r"Not all machines are using the same clock rate.")
+                raise Exception(
+                    r"Not all machines are using the same clock rate."
+                )
             
             # Check if any machine is using a different ranging protocol
             if machines[machine].ds_twr != self.ds_twr:
-                raise Exception(r"Not all machines are using the same ranging protocol.")
+                raise Exception(
+                    r"Not all machines are using the same ranging protocol."
+                )
             
             # Check if any machine does not record fpp, if so, 
             # neglect fpp information for all machines
@@ -263,11 +271,81 @@ class PostProcess(object):
         all_dfs = []
         for machine in machines:
             all_dfs = all_dfs + [machines[machine].df_uwb]
+            if self.passive_listening:
+                all_dfs_passive = all_dfs_passive + [machines[machine].df_passive]
 
         # Combine dataframes into one local dataframe
         self.df = pd.concat(all_dfs)
         self.df.sort_values(by=['time'] , inplace=True)
         self.df.reset_index(inplace=True, drop=True)
+
+        if self.passive_listening:
+            self.df_passive = pd.concat(all_dfs_passive)
+            self.df_passive.sort_values(by=["time"], inplace=True)
+            self.df_passive.reset_index(inplace=True, drop=True)
+            
+            # Match entries in df_passive with entries in df_uwb
+            self._match_uwb_data()
+
+    def _match_uwb_data(self):
+        """Adds a new "idx" field to df_passive which indicates the row in
+        df_uwb that represents the corresponding TWR instance.
+        """
+        # Get the corresponding row in df_uwb.
+        self.df_passive['idx'] = \
+                        self.df_passive.apply(
+                                                self._match_tx_ts, 
+                                                axis=1
+                                             )
+
+        # Drop overlapping fields between the two dataframes
+        self.df_passive.drop(columns=['tx1_n',
+                                      'tx2_n',
+                                      'tx3_n',
+                                      'rx1_n',
+                                      'rx2_n',
+                                      'rx3_n',],
+                             inplace=True)
+
+        # Drop any passive listening measurements corresponding to
+        # missed TWR measurements.
+        self.df_passive.dropna(subset=["idx"], inplace=True)
+    
+    def _match_tx_ts(self, row):
+        """Find the row in df_uwb corresponding to a single entry in df_passive.
+        # TODO: Speed up this timestamp matching process
+
+        Parameters
+        ----------
+        row : df
+            A row from df_passive.
+
+        Returns
+        -------
+        int
+            The corresponding row in df_uwb.
+        """
+        # Get all timestamps that must overlap between the two dataframes.
+        t1 = row['tx1_n']
+        t2 = row['tx2_n']
+        t3 = row['tx3_n']
+        r1 = row['rx1_n']
+        r2 = row['rx2_n']
+        r3 = row['rx3_n']
+        
+        # Extract the index of the corresponding row. 
+        index = self.df[(self.df['tx1'] == t1) 
+                        & (self.df['tx2'] == t2) 
+                        & (self.df['tx3'] == t3)
+                        & (self.df['rx1'] == r1)
+                        & (self.df['rx2'] == r2)
+                        & (self.df['rx3'] == r3)].index 
+
+        # If there is no overlap, return None
+        if not len(index):
+            index = [np.NaN]
+        
+        return index[0]
     
     def _store_pose_data(self, machines) -> None:
         """Get and store pose data locally.
@@ -398,6 +476,7 @@ class PostProcess(object):
     
     def _compute_intervals(self) -> None:
         """Compute the timestamp intervals.
+        # TODO: compute intervals associated with passive listening.
         """
         self.df["del_t1"] = self.df['rx2'] - self.df['tx1']
         self.df["del_t2"] = self.df['tx2'] - self.df['rx1']
@@ -419,6 +498,8 @@ class PostProcess(object):
     ### -------------------------- UNWRAPPING METHODS -------------------------- ###
     def _unwrap_all_clocks(self) -> None:
         """Unwrap all timestamps, one at a time. 
+        # TODO: Unwrap using the new way where we use the laptop timestamps.
+        # TODO: Need to unwrap passive listening measurements as well. We have corresponding indices.
         """
         # Find the maximum timestamp value before unwrapping, in nanoseconds 
         max_ts_ns = self.max_ts_value * self.ts_to_ns
