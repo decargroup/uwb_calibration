@@ -2,6 +2,8 @@ import numpy as np
 import pandas as pd
 from pylie import SO3
 from .utils import interpolate
+from .machine import Machine
+from typing import List
 
 class PostProcess(object):
     """A class to process pose and UWB data from multiple UWB tags.
@@ -164,7 +166,7 @@ class PostProcess(object):
         self._save_params(machines)    
         self._process_data(machines)
 
-    def _save_params(self, machines) -> None:
+    def _save_params(self, machines: List[Machine]) -> None:
         """Inherit some parameters from the Machine objects, and check for inconsistencies
         between different machines.
 
@@ -269,6 +271,7 @@ class PostProcess(object):
         """
         # Get UWB data from all machines
         all_dfs = []
+        all_dfs_passive = []
         for machine in machines:
             all_dfs = all_dfs + [machines[machine].df_uwb]
             if self.passive_listening:

@@ -94,7 +94,7 @@ class Machine(object):
             self.uwb_topic = configs['UWB_TOPIC'][str(id)]
 
             if self.passive_listening:
-                self.passive_topic = configs['PASSIVE_TOPIC'][str(id)]
+                self.passive_topic = configs['LISTENING_TOPIC'][str(id)]
         
         # Retrieve the message fields for the UWB data
         self.uwb_fields = [
@@ -102,7 +102,7 @@ class Machine(object):
         ]
         if self.passive_listening:
             self.passive_fields = [
-                configs['PASSIVE_MESSAGE'][key] for key in configs['PASSIVE_MESSAGE'].keys()
+                configs['LISTENING_MESSAGE'][key] for key in configs['LISTENING_MESSAGE'].keys()
             ]
         
     def convert_uwb_timestamps(self) -> None:
