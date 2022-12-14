@@ -2,6 +2,7 @@ from typing import Tuple
 from bagpy import bagreader
 import numpy as np
 import pandas as pd
+from configparser import ConfigParser
 
 class Machine(object):
     """A base class for UWB machines.
@@ -47,9 +48,9 @@ class Machine(object):
     """
     def __init__(
         self,
-        configs,
-        id,
-        is_ros = True,
+        configs: ConfigParser,
+        id: int,
+        is_ros: bool = True,
     ) -> None:
         """Constructor
 
@@ -69,6 +70,7 @@ class Machine(object):
         
         # Retrieve booleans specifying what kind of data to expect
         self.ds_twr = eval(configs['PARAMS']['ds_twr'])
+        self.passive_listening = eval(configs['PARAMS']['passive_listening'])
         self.fpp_exists = eval(configs['PARAMS']['fpp_exists'])
         self.rxp_exists = eval(configs['PARAMS']['rxp_exists'])
         self.std_exists = eval(configs['PARAMS']['std_exists'])
@@ -90,9 +92,18 @@ class Machine(object):
         if is_ros:
             self.pose_topic = configs['POSE_TOPIC'][str(id)]
             self.uwb_topic = configs['UWB_TOPIC'][str(id)]
+
+            if self.passive_listening:
+                self.passive_topic = configs['PASSIVE_TOPIC'][str(id)]
         
         # Retrieve the message fields for the UWB data
-        self.uwb_fields = [configs['UWB_MESSAGE'][key] for key in configs['UWB_MESSAGE'].keys()]
+        self.uwb_fields = [
+            configs['UWB_MESSAGE'][key] for key in configs['UWB_MESSAGE'].keys()
+        ]
+        if self.passive_listening:
+            self.passive_fields = [
+                configs['PASSIVE_MESSAGE'][key] for key in configs['PASSIVE_MESSAGE'].keys()
+            ]
         
     def convert_uwb_timestamps(self) -> None:
         """Covert UWB timestamps to nanoseconds.
@@ -105,6 +116,19 @@ class Machine(object):
         if self.ds_twr:
             self.df_uwb['tx3'] *= self.ts_to_ns
             self.df_uwb['rx3'] *= self.ts_to_ns
+
+        if self.passive_listening:
+            self.df_passive['rx1'] *= self.ts_to_ns
+            self.df_passive['rx2'] *= self.ts_to_ns
+            self.df_passive['tx1_n'] *= self.ts_to_ns
+            self.df_passive['rx1_n'] *= self.ts_to_ns
+            self.df_passive['tx2_n'] *= self.ts_to_ns
+            self.df_passive['rx2_n'] *= self.ts_to_ns
+            
+            if self.ds_twr:
+                self.df_passive['rx3'] *= self.ts_to_ns
+                self.df_passive['tx3_n'] *= self.ts_to_ns
+                self.df_passive['rx3_n'] *= self.ts_to_ns
             
     def drop_target_meas(self) -> None:
         """If range measurements are stored at both initiating and targetted tag, 
@@ -207,6 +231,7 @@ class RosMachine(Machine):
         'std2': int
             The leading-edge detection algorithm's uncertainty on the second signal.
             Only exists if self.std_exists == True.
+    # TODO: add df_passive documentation.
 
     Examples
     --------
@@ -251,7 +276,7 @@ class RosMachine(Machine):
         super().__init__(configs, id)
 
         # Read the ground-truth and UWB data
-        self.df_pose, self.df_uwb = self._read_data()
+        self.df_pose, self.df_uwb, self.df_passive = self._read_data()
         
         # pre-process data
         self.merge_pose_data()
@@ -282,14 +307,24 @@ class RosMachine(Machine):
             bag = bagreader(self.uwb_path)
         uwb_data = bag.message_by_topic(self.uwb_topic)
         df_uwb = pd.read_csv(uwb_data)
-        
-        return df_pose, df_uwb
+
+        # Passive data
+        if self.passive_listening:
+            passive_data = bag.message_by_topic(self.passive_topic)
+            df_passive = pd.read_csv(passive_data)
+        else:
+            df_passive = []
+
+        return df_pose, df_uwb, df_passive
         
     def _process_ros_timestamps(self) -> None:
         """Process ROS timestamps.
         """
         self._merge_timestamp_headers(self.df_pose)
         self._merge_timestamp_headers(self.df_uwb)
+
+        if self.passive_listening:
+            self._merge_timestamp_headers(self.df_passive)
         
     @staticmethod
     def _merge_timestamp_headers(df) -> None:
@@ -328,7 +363,7 @@ class CsvMachine(Machine):
                          meas_at_target,
                          is_ros = False)
 
-        self.df_pose, self.df_uwb = self._read_data()
+        self.df_pose, self.df_uwb, self.df_passive = self._read_data()
         
         self.convert_uwb_timestamps(ts_to_ns)
         # self._process_ros_timestamps()
@@ -337,4 +372,4 @@ class CsvMachine(Machine):
             self.drop_target_meas()
         
     def _read_data(self) -> None:
-        raise Exception("To be implemented.")
+        raise NotImplementedError()
