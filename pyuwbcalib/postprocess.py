@@ -336,7 +336,7 @@ class PostProcess(object):
         t1 = row['tx1_n']
         # t2 = row['tx2_n']
         # t3 = row['tx3_n']
-        # r1 = row['rx1_n']
+        r1 = row['rx1_n']
         # r2 = row['rx2_n']
         # r3 = row['rx3_n']
         
@@ -347,7 +347,10 @@ class PostProcess(object):
         #                 & (self.df['rx1'] == r1)
         #                 & (self.df['rx2'] == r2)
         #                 & (self.df['rx3'] == r3)].index 
-        index = self.df[(self.df['tx1'] == t1)].index 
+        index = self.df[
+            (self.df['tx1'] == t1)
+            & (self.df['rx1'] == r1)
+        ].index 
 
         # If there is no overlap, return None
         if not len(index):
@@ -523,22 +526,22 @@ class PostProcess(object):
             
             # Check if a clock wrap occured at the first measurement, and unwrap
             if df_iter['rx2'].iloc[0] < df_iter['tx1'].iloc[0]:
-                df_iter.at[0,'rx2'] += max_ts_ns
+                df_iter['rx2'].iloc[0] += max_ts_ns
                 iter_rx2 = 1
                 iter_rx3 = 1
                 
             if df_iter['tx2'].iloc[0] < df_iter['rx1'].iloc[0]:
-                df_iter.at[0,'tx2'] += max_ts_ns
+                df_iter['tx2'].iloc[0] += max_ts_ns
                 iter_tx2 = 1
                 iter_tx3 = 1
 
             if self.ds_twr:
                 if df_iter['tx3'].iloc[0] < df_iter['tx2'].iloc[0]:
-                    df_iter.at[0,'tx3'] += max_ts_ns
+                    df_iter['tx3'].iloc[0] += max_ts_ns
                     iter_tx3 = 1
 
                 if df_iter['rx3'].iloc[0] < df_iter['rx2'].iloc[0]:
-                    df_iter.at[0,'rx3'] += max_ts_ns
+                    df_iter['rx3'].iloc[0] += max_ts_ns
                     iter_rx3 = 1
 
             # Individual unwraps
@@ -566,13 +569,13 @@ class PostProcess(object):
                 
                 # Check if a clock wrap occured at the first measurement, and unwrap
                 if df_iter['rx2'].iloc[0] < df_iter['rx1'].iloc[0]:
-                    df_iter.at[0,'rx2'] += max_ts_ns
+                    df_iter['rx2'].iloc[0] += max_ts_ns
                     iter_rx2 = 1
                     iter_rx3 = 1
 
                 if self.ds_twr:
                     if df_iter['rx3'].iloc[0] < df_iter['rx2'].iloc[0]:
-                        df_iter.at[0,'rx3'] += max_ts_ns
+                        df_iter['rx3'].iloc[0] += max_ts_ns
                         iter_rx3 = 1
 
                 # Individual unwraps
