@@ -5,7 +5,7 @@ from pyuwbcalib.utils import save
 from configparser import ConfigParser, ExtendedInterpolation
 
 # The configuration file
-config_file = 'config/ifo_3_drones_rosbag.config'
+config_file = 'config/ifo_3_drones_rosbag_random.config'
 
 # Parse through the configuration file
 parser = ConfigParser(interpolation=ExtendedInterpolation())

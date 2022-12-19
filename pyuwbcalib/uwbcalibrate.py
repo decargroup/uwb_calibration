@@ -105,7 +105,7 @@ class UwbCalibrate(PostProcess):
         """Remove the static region in the extremes.
         """
         # Threshold for motion detection, in metres
-        thresh = 0.1
+        thresh = 0.1 # TODO: make this user-defined
 
         # Window size to compare measurements 
         window = 10 
