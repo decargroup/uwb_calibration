@@ -311,17 +311,22 @@ class PostProcess(object):
                                              )
 
         # Drop overlapping fields between the two dataframes
-        self.df_passive.drop(columns=['tx1_n',
-                                      'tx2_n',
-                                      'tx3_n',
-                                      'rx1_n',
-                                      'rx2_n',
-                                      'rx3_n',],
-                             inplace=True)
+        self.df_passive.drop(
+            columns=[
+                'tx1_n',
+                'tx2_n',
+                'tx3_n',
+                'rx1_n',
+                'rx2_n',
+                'rx3_n',
+            ],
+            inplace=True
+        )
 
         # Drop any passive listening measurements corresponding to
         # missed TWR measurements.
         self.df_passive.dropna(subset=["idx"], inplace=True)
+        self.df_passive.reset_index(inplace=True, drop=True)
     
     def _match_tx_ts(self, row):
         """Find the row in df_uwb corresponding to a single entry in df_passive.
@@ -596,11 +601,11 @@ class PostProcess(object):
             & (df_unwrapped["ts_instance"]==ts_instance)
         ]
         ts_name = self.ts_names_list[type][ts_instance]
-        if type==2:
+        if self.passive_listening and type==2:
             idx = self.df_passive.index.isin(df["index_og"])
             self.df_passive.loc[idx, ts_name] \
                 = np.array(df["ts"])
-        else:
+        elif type != 2:
             idx = self.df.index.isin(df["index_og"])
             self.df.loc[idx, ts_name] \
                 = np.array(df["ts"])
