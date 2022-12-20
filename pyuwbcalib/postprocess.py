@@ -533,12 +533,13 @@ class PostProcess(object):
             df_to = self.df[self.df["to_id"]==tag].copy()
             if self.passive_listening:
                 df_passive = self.df_passive[self.df_passive["my_id"]==tag].copy()
+                df_passive["time"] = np.array(self.df.loc[df_passive["idx"],"time"]) # TODO: turns out passive listening timestamps aren't reliably timestamped
             else:
                 df_passive = None
             df_list = [
                 df_from,
                 df_to,
-                df_passive,
+                df_passive, 
             ]
             df_merged = self._unwrap_tag(
                 df_list,
