@@ -3,7 +3,8 @@ import pandas as pd
 from pylie import SO3
 from .utils import interpolate
 from .machine import Machine
-from typing import List
+from typing import List, Any
+from itertools import product
 
 class PostProcess(object):
     """A class to process pose and UWB data from multiple UWB tags.
@@ -162,6 +163,12 @@ class PostProcess(object):
             If pairs are merged together irrespective of whom of the pair initiates, 
             by default False
         """
+        # TODO: this should come from the configs file
+        self.ts_names_list = [
+            ["tx1", "rx2", "rx3"],
+            ["rx1", "tx2", "tx3"],
+            ["rx1", "rx2", "rx3"],
+        ]
         self.merge_pairs = merge_pairs
         self._save_params(machines)    
         self._process_data(machines)
@@ -532,21 +539,15 @@ class PostProcess(object):
                 df_list,
                 max_ts_ns,
             )
-            # TODO: self._update_df(df_merged, tag)
+            self._update_df(df_merged)
 
         return None
      
-
     def _unwrap_tag(
         self,
         df_list: List[pd.DataFrame],
         max_ts_ns: float,
     ):
-        ts_names_list = [
-            ["tx1", "rx2", "rx3"],
-            ["rx1", "tx2", "tx3"],
-            ["rx1", "rx2", "rx3"],
-        ]
         df_merged = pd.DataFrame()
         for i,df in enumerate(df_list):
             df_base = pd.DataFrame()
@@ -555,7 +556,7 @@ class PostProcess(object):
             df_base["time"] = np.array(df["time"])
 
             dfs = []
-            for j,ts_name in enumerate(ts_names_list[i]):
+            for j,ts_name in enumerate(self.ts_names_list[i]):
                 dfs += [df_base.copy()]
                 dfs[j]["ts_instance"] = j
                 dfs[j]["ts"] = np.array(df[ts_name])
@@ -576,7 +577,34 @@ class PostProcess(object):
         df_merged = self._long_interval_unwrap(df_merged,max_ts_ns)
 
         return df_merged
-        
+
+    def _update_df(
+        self,
+        df_unwrapped: pd.DataFrame,
+    ):
+        for tpl in product([0,1,2],repeat=2):
+            self._update_df_per_type(df_unwrapped,*tpl)
+
+    def _update_df_per_type(
+        self,
+        df_unwrapped: pd.DataFrame,
+        type: int,
+        ts_instance: int,
+    ):
+        df = df_unwrapped[
+            (df_unwrapped["type"]==type) 
+            & (df_unwrapped["ts_instance"]==ts_instance)
+        ]
+        ts_name = self.ts_names_list[type][ts_instance]
+        if type==2:
+            idx = self.df_passive.index.isin(df["index_og"])
+            self.df_passive.loc[idx, ts_name] \
+                = np.array(df["ts"])
+        else:
+            idx = self.df.index.isin(df["index_og"])
+            self.df.loc[idx, ts_name] \
+                = np.array(df["ts"])
+
     @staticmethod
     def _unwrap(
         data: pd.DataFrame, 
