@@ -53,11 +53,32 @@ class ApplyCalibration():
         return df
 
     @staticmethod
+    def antenna_delays_passive(
+        df: pd.DataFrame, 
+        delays: Dict[int, float],
+        tx_rx_split: Dict[str, float] = {'tx':0.6, 'rx':0.4},
+    ) -> pd.DataFrame:
+        # Find the delays associated with the ranging tags for every measurement
+        delay = np.array([delays[x] for x in np.array(df["my_id"])])
+        
+        # Compute the individual delays
+        rx_delay = tx_rx_split['rx'] * delay
+
+        # Correct the individual timestamps
+        df["rx1"] += rx_delay
+        df["rx2"] += rx_delay
+
+        if 'rx3' in df.columns:
+            df["rx3"] += rx_delay
+
+        return df
+
+    @staticmethod
     def power(
         df, 
         bias_spl,
         std_spl, 
-        f_lift,
+        f_lift = lambda x: 10**((x + 82)/10),
     ):
         # Speed of light
         _c = 299702547 
@@ -77,6 +98,28 @@ class ApplyCalibration():
             get_bias, 
             axis=1
         )
+
+        return df
+
+    @staticmethod
+    def power_passive(
+        df, 
+        bias_spl,
+        std_spl, 
+        f_lift = lambda x: 10**((x + 82)/10),
+    ):
+        # Speed of light
+        _c = 299702547 
+
+        lift_fpp1 = f_lift(np.array(df["fpp1"]))
+        lift_fpp2 = f_lift(np.array(df["fpp2"]))
+        lift_fpp3 = f_lift(np.array(df["fpp3"]))
+        lift_avg = 1/3*(lift_fpp1 + lift_fpp2 + lift_fpp3)
+
+        df['std'] = std_spl(lift_avg) 
+        df['rx1'] -= bias_spl(lift_fpp1) / _c * 1e9
+        df['rx2'] -= bias_spl(lift_fpp2) / _c * 1e9
+        df['rx3'] -= bias_spl(lift_fpp3) / _c * 1e9 
 
         return df
 
