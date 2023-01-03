@@ -26,7 +26,7 @@ calib.calibrate_antennas(inplace=True)
 bias_antenna_delay = np.array(calib.df['bias'])
 
 # Correct power-correlated bias
-calib.fit_power_model()
+calib.fit_power_model(inplace=True)
 
 # Compute the fully-calibrated measurements
 bias_fully_calib = np.array(calib.df['bias'])
