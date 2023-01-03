@@ -579,7 +579,7 @@ class PostProcess(object):
         )
         df_merged.reset_index(inplace=True,drop=True)
 
-        df_merged["ts"] = self._unwrap(df_merged["ts"],max_ts_ns)
+        df_merged = self._unwrap(df_merged,max_ts_ns)
         df_merged = self._long_interval_unwrap(df_merged,max_ts_ns)
 
         return df_merged
@@ -613,15 +613,15 @@ class PostProcess(object):
 
     @staticmethod
     def _unwrap(
-        data: pd.DataFrame, 
+        df: pd.DataFrame, 
         max: float, 
         iter: int = 0,
-    ) -> np.ndarray:
+    ) -> pd.DataFrame:
         """Unwrap one clock by finding instances where the timestamp decreases.
 
         Parameters
         ----------
-        data: pd.dataframe
+        data: pd.DataFrame
             Data corresponding to one clock.
         max: float
             The maximum timestamp value before unwrapping, in nanoseconds.
@@ -630,11 +630,14 @@ class PostProcess(object):
 
         Returns
         -------
-        np.ndarray
-            Unwrapped timestamps.
+        pd.DataFrame
+            Unwrapped data corresponding to one clock.
         """
         # Convert to np.ndarray
-        data = np.array(data)
+        data = np.array(df["ts"])
+        time = np.array(df["time"])
+        types = np.array(df["type"])
+        ts_instances = np.array(df["ts_instance"])
         
         # Find indices associated with negative deltas.
         temp = data[1:] - data[:-1]
@@ -642,11 +645,57 @@ class PostProcess(object):
 
         # Unwrap by adding the max value whenever a negative delta occurs.
         for lv0, _ in enumerate(data):
-            if idx[lv0]:
+            if idx[lv0] and lv0>25:
+                # Check if unwrapping fits better a straight line w.r.t. ROS time
+                type_iter = types[lv0]
+                ts_instance_iter = ts_instances[lv0]
+                idx_iter = lv0 - 1
+                found = False
+                while not found:
+                    if (
+                        (types[idx_iter] == type_iter) \
+                        and (ts_instances[idx_iter] == ts_instance_iter)
+                    ):
+                        idx1 = idx_iter
+                        found = True
+                    else:
+                        idx_iter -= 1
+
+                idx_iter -= 1
+                found = False
+                while not found:
+                    if (
+                        (types[idx_iter] == type_iter) \
+                        and (ts_instances[idx_iter] == ts_instance_iter)
+                    ):
+                        idx0 = idx_iter
+                        found = True
+                    else:
+                        idx_iter -= 1
+
+                ts0 = data[idx0]
+                t0 = time[idx0]
+                ts1 = data[idx1]
+                t1 = time[idx1]
+                ts = data[lv0]
+                t = time[lv0]
+                e1 = np.abs(
+                    ((ts1 - ts0) / (t1 - t0) * (t-t1) + ts1) \
+                    - (ts + (iter+1)*max)
+                )
+                e2 = np.abs(
+                    ((ts1 - ts0) / (t1 - t0) * (t-t1) + ts1) \
+                    - (ts + iter*max)
+                )
+                if (e1 < e2):
+                    iter += 1
+            elif idx[lv0]:
                 iter += 1
             data[lv0] += iter*max    
 
-        return data
+        df["ts"] = data
+
+        return df
 
     @staticmethod
     def _long_interval_unwrap(
@@ -672,7 +721,7 @@ class PostProcess(object):
         """
         # Need to first reindex the dataframe 
         df.reset_index(inplace=True)
-        mult_wrap_idx = df.index[df['time'].diff()>0.065].tolist()
+        mult_wrap_idx = df.index[df['time'].diff()>0.0665].tolist()
 
         for idx in mult_wrap_idx:
             dt = df.iloc[idx]['time'] - df.iloc[idx-1]['time']

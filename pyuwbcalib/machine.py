@@ -287,7 +287,7 @@ class RosMachine(Machine):
         if not meas_at_target:
             self.drop_target_meas()
             
-    def _read_data(self) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    def _read_data(self) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         """Read rosbags and extract pose and UWB information.
 
         Returns
