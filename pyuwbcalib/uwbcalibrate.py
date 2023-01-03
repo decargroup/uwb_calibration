@@ -12,10 +12,11 @@ class ApplyCalibration():
     def __init__():
         raise NotImplementedError("This class is not mean to be initialized.")
 
+    @staticmethod
     def antenna_delays(
         df: pd.DataFrame, 
         delays: Dict[int, float],
-        tx_rx_split: Dict[str, float],
+        tx_rx_split: Dict[str, float] = {'tx':0.6, 'rx':0.4},
     ) -> pd.DataFrame:
         # Find the delays associated with the ranging tags for every measurement
         from_delay = np.array([delays[x] for x in np.array(df["from_id"])])
@@ -32,15 +33,15 @@ class ApplyCalibration():
         rx_to_delay = tx_rx_split['rx'] * to_delay
 
         # Correct the individual timestamps
-        df["tx1"] = -tx_from_delay
-        df["rx2"] = rx_from_delay
+        df["tx1"] += -tx_from_delay
+        df["rx2"] += rx_from_delay
 
-        df["rx1"] = rx_to_delay
-        df["tx2"] = -tx_to_delay
+        df["rx1"] += rx_to_delay
+        df["tx2"] += -tx_to_delay
 
         if 'tx3' in df.columns:
-            df["tx3"] = -tx_to_delay
-            df["rx3"] = rx_to_delay
+            df["tx3"] += -tx_to_delay
+            df["rx3"] += rx_to_delay
 
         # Correct the range measurements and bias
         df['range'] = compute_range_meas(df)
@@ -82,6 +83,7 @@ class UwbCalibrate(PostProcess):
     std_spl: _type_
         The learnt "standard deviation vs. lifted power" spline.
         Only exists after fit_power_model() is called.
+    # TODO: find a better way to deal with the "only exists" fields above
 
     Examples
     --------
@@ -313,50 +315,13 @@ class UwbCalibrate(PostProcess):
         
         if inplace:
             # Correct the stored range measurements and timestamps
-            self._correct_antenna_delays(tx_rx_split)
+            self.df = ApplyCalibration.antenna_delays(
+                self.df, 
+                self.delays,
+                tx_rx_split
+            )
 
         return self.delays
-
-    def _correct_antenna_delays(self, tx_rx_split) -> None:
-        """Correct the stored range measurements and timestamps by utilizing the
-        estimated tag-dependent antenna delays.
-
-        Parameters
-        ----------
-        tx_rx_split: dict
-            The split of the calibrated delay between transmission and reception delay.
-        """
-        # Find the delays associated with the ranging tags for every measurement
-        from_delay = np.array([self.delays[x] for x in np.array(self.df["from_id"])])
-        to_delay = np.array([self.delays[x] for x in np.array(self.df["to_id"])])
-        
-        # Correct the intervals
-        self.df["del_t1"] += from_delay
-        self.df["del_t2"] -= to_delay
-        
-        # Compute the individual delays
-        tx_from_delay = tx_rx_split['tx'] * from_delay
-        rx_from_delay = tx_rx_split['rx'] * from_delay
-        tx_to_delay = tx_rx_split['tx'] * to_delay
-        rx_to_delay = tx_rx_split['rx'] * to_delay
-
-        # Correct the individual timestamps
-        self.df["tx1"] += -tx_from_delay
-        self.df["rx2"] += rx_from_delay
-
-        self.df["rx1"] += rx_to_delay
-        self.df["tx2"] += -tx_to_delay
-
-        if self.ds_twr:
-            self.df["tx3"] += -tx_to_delay
-            self.df["rx3"] += rx_to_delay
-
-        # Correct the range measurements and bias
-        self.df['range'] = compute_range_meas(self.df)
-        self.df['bias'] = self.df.apply(
-            get_bias, 
-            axis=1
-        )
 
     def _solve_for_antenna_delays(
         self, 
