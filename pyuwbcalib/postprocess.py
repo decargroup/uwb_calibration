@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 from pylie import SO3
-from .utils import interpolate
+from .utils import interpolate, get_bias
 from .machine import Machine
 from typing import List, Any
 from itertools import product
@@ -404,7 +404,7 @@ class PostProcess(object):
 
         # Compute and store the range bias.
         self.df['bias'] = self.df.apply(
-            self._get_bias, 
+            get_bias, 
             axis=1
         )
         
@@ -473,22 +473,6 @@ class PostProcess(object):
             - r_1w_a
             - C_a1 @ r_t1_1
         )
-        
-    @staticmethod 
-    def _get_bias(df) -> float:
-        """Get the ranging bias.
-
-        Parameters
-        ----------
-        df: pd.dataframe
-            Dataframe containing range and ground truth range (gt_range).
-
-        Returns
-        -------
-        pd.dataframe
-            The computed bias.
-        """
-        return df['range'] - df['gt_range']
 
     def _get_pairs(self) -> None:
         """Save the ranging pair for every measurement, and get a list of all unique
@@ -500,6 +484,7 @@ class PostProcess(object):
     def _compute_intervals(self) -> None:
         """Compute the timestamp intervals.
         # TODO: compute intervals associated with passive listening.
+        # TODO: maybe remove this completely and let the User compute these whenever needed. Just use timestamps. Or have this as a util to be used by the user if needed.
         """
         self.df["del_t1"] = self.df['rx2'] - self.df['tx1']
         self.df["del_t2"] = self.df['tx2'] - self.df['rx1']

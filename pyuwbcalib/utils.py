@@ -2,6 +2,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import pickle
 import numpy as np
+import pandas as pd 
 from scipy.interpolate import interp1d
 
 def save(obj, filename="file.pickle") -> None:
@@ -76,3 +77,44 @@ def interpolate(
         f = interp1d(t_old, x, kind='linear', fill_value='extrapolate', axis=0)
 
         return f(t_new)
+
+def compute_range_meas(
+    df: pd.DataFrame,
+) -> np.ndarray:
+        """Compute the range measurement based on the timestamp intervals.
+
+        Returns
+        -------
+        np.ndarray
+            Range measurements.
+        """
+        # Speed of light
+        c = 299702547 
+
+        del_t1 = df['rx2'] - df['tx1']
+        del_t2 = df['tx2'] - df['rx1']
+        if 'tx3' in df.columns:
+            del_t3 = df['rx3'] - df['rx2']
+            del_t4 = df['tx3'] - df['tx2']
+            range = 0.5 * c / 1e9 * \
+                    (del_t1 - (del_t3 / del_t4) * del_t2)
+        else:
+            range = 0.5 * c / 1e9 * \
+                    (del_t1 - del_t2)
+
+        return range
+
+def get_bias(df) -> float:
+        """Get the ranging bias.
+
+        Parameters
+        ----------
+        df: pd.dataframe
+            Dataframe containing range and ground truth range (gt_range).
+
+        Returns
+        -------
+        pd.dataframe
+            The computed bias.
+        """
+        return df['range'] - df['gt_range']

@@ -1,11 +1,65 @@
-from typing import Tuple
+from typing import Tuple, Dict
 import numpy as np
 from .postprocess import PostProcess
 from scipy.interpolate import UnivariateSpline
 from scipy.optimize import least_squares
 import pickle
 import pandas as pd
+from .utils import compute_range_meas, get_bias
 
+class ApplyCalibration():
+
+    def __init__():
+        raise NotImplementedError("This class is not mean to be initialized.")
+
+    def antenna_delays(
+        df: pd.DataFrame, 
+        delays: Dict[int, float],
+        tx_rx_split: Dict[str, float],
+    ) -> pd.DataFrame:
+        # Find the delays associated with the ranging tags for every measurement
+        from_delay = np.array([delays[x] for x in np.array(df["from_id"])])
+        to_delay = np.array([delays[x] for x in np.array(df["to_id"])])
+        
+        # Correct the intervals
+        df["del_t1"] += from_delay
+        df["del_t2"] -= to_delay
+        
+        # Compute the individual delays
+        tx_from_delay = tx_rx_split['tx'] * from_delay
+        rx_from_delay = tx_rx_split['rx'] * from_delay
+        tx_to_delay = tx_rx_split['tx'] * to_delay
+        rx_to_delay = tx_rx_split['rx'] * to_delay
+
+        # Correct the individual timestamps
+        df["tx1"] = -tx_from_delay
+        df["rx2"] = rx_from_delay
+
+        df["rx1"] = rx_to_delay
+        df["tx2"] = -tx_to_delay
+
+        if 'tx3' in df.columns:
+            df["tx3"] = -tx_to_delay
+            df["rx3"] = rx_to_delay
+
+        # Correct the range measurements and bias
+        df['range'] = compute_range_meas(df)
+        df['bias'] = df.apply(
+            get_bias, 
+            axis=1
+        )
+
+        return df
+
+    def power(
+        df, 
+        bias,
+        bias_std, 
+    ):
+        pass
+
+
+    
 class UwbCalibrate(PostProcess):
     """A class to handle calibration of the UWB modules. 
 
@@ -190,6 +244,7 @@ class UwbCalibrate(PostProcess):
         self, 
         loss='cauchy', 
         tx_rx_split={'tx':0.6, 'rx':0.4},
+        inplace = False,
     ) -> None:
         """Estimate the antenna delays for the UWB tags, and correct the corresponding timestamps.
 
@@ -220,6 +275,8 @@ class UwbCalibrate(PostProcess):
             Splitting the calibrated delay between transmission and reception delay, 
             by default {'tx':0.6, 'rx':0.4} based on 
             "Decawave (2018), APS014: DW1000 Antenna Delay Calibration Version 1.2. 1.15."
+        inplace: bool, optional
+            Whether to apply the calibration directly to the object, by default False.
         """
         # Get IDs of all tags
         tags = list(np.concatenate(list(self.tag_ids.values())).flat)
@@ -254,8 +311,11 @@ class UwbCalibrate(PostProcess):
         # Separate the delays per tag
         self.delays = {id: x[i] for i,id in enumerate(tags)}
         
-        # Correct the stored range measurements and timestamps
-        self._correct_antenna_delays(tx_rx_split)
+        if inplace:
+            # Correct the stored range measurements and timestamps
+            self._correct_antenna_delays(tx_rx_split)
+
+        return self.delays
 
     def _correct_antenna_delays(self, tx_rx_split) -> None:
         """Correct the stored range measurements and timestamps by utilizing the
@@ -281,20 +341,20 @@ class UwbCalibrate(PostProcess):
         rx_to_delay = tx_rx_split['rx'] * to_delay
 
         # Correct the individual timestamps
-        self.df["tx1"] = -tx_from_delay
-        self.df["rx2"] = rx_from_delay
+        self.df["tx1"] += -tx_from_delay
+        self.df["rx2"] += rx_from_delay
 
-        self.df["rx1"] = rx_to_delay
-        self.df["tx2"] = -tx_to_delay
+        self.df["rx1"] += rx_to_delay
+        self.df["tx2"] += -tx_to_delay
 
         if self.ds_twr:
-            self.df["tx3"] = -tx_to_delay
-            self.df["rx3"] = rx_to_delay
+            self.df["tx3"] += -tx_to_delay
+            self.df["rx3"] += rx_to_delay
 
         # Correct the range measurements and bias
-        self.df['range'] = self.compute_range_meas()
+        self.df['range'] = compute_range_meas(self.df)
         self.df['bias'] = self.df.apply(
-            self._get_bias, 
+            get_bias, 
             axis=1
         )
 
@@ -452,9 +512,9 @@ class UwbCalibrate(PostProcess):
         self.df['std'] = self.std_spl(lifted_pr_unsorted)
         self.df['range'] -= self.bias_spl(lifted_pr_unsorted)
         self.df['bias'] = self.df.apply(
-                                        self._get_bias, 
-                                        axis=1
-                                       )
+            get_bias, 
+            axis=1
+        )
 
     @staticmethod
     def remove_outliers(
@@ -517,27 +577,6 @@ class UwbCalibrate(PostProcess):
         return UnivariateSpline(x, 
                                 y, 
                                 k=k)
-
-    def compute_range_meas(self) -> np.ndarray:
-        """Compute the range measurement based on the timestamp intervals.
-
-        Returns
-        -------
-        np.ndarray
-            Range measurements.
-        """
-        del_t1 = self.df['del_t1']
-        del_t2 = self.df['del_t2']
-        if self.ds_twr:
-            del_t3 = self.df['del_t3']
-            del_t4 = self.df['del_t4']
-            range = 0.5 * self._c / 1e9 * \
-                    (del_t1 - (del_t3 / del_t4) * del_t2)
-        else:
-            range = 0.5 * self._c / 1e9 * \
-                    (del_t1 - del_t2)
-
-        return range
 
     def save_calib_results(
         self, 
