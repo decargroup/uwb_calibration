@@ -541,6 +541,8 @@ class PostProcess(object):
     ):
         df_merged = pd.DataFrame()
         for i,df in enumerate(df_list):
+            if df is None:
+                continue
             df_base = pd.DataFrame()
             df_base["index_og"] = df.index
             df_base["type"] = i
@@ -679,8 +681,12 @@ class PostProcess(object):
                 iter += 1
             data[lv0] += iter*max    
 
-        for type_id in (0,1,2):
-            for ts_instance_id in (0,1,2):
+        if self.passive_listening:
+            possible_types = (0,1,2)
+        else:
+            possible_types = (0,1)
+        for type_id in possible_types:
+            for ts_instance_id in possible_types:
                 data[(types == type_id) & (ts_instances == ts_instance_id)] \
                     = self.ensure_linear(
                         data[(types == type_id) & (ts_instances == ts_instance_id)].copy(), 
@@ -692,8 +698,8 @@ class PostProcess(object):
         time_ref = time[(types == 0) & (ts_instances == 0)]
         t_ref = time_ref[50]
         d_ref = data_ref[50] 
-        for type_id in (0,1,2):
-            for ts_instance_id in (0,1,2):
+        for type_id in possible_types:
+            for ts_instance_id in possible_types:
                 if (type_id == 0) and (ts_instance_id == 0):
                     continue
                 
