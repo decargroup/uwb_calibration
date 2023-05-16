@@ -16,7 +16,7 @@ class ApplyCalibration():
     def antenna_delays(
         df: pd.DataFrame, 
         delays: Dict[int, float],
-        tx_rx_split: Dict[str, float] = {'tx':0.6, 'rx':0.4},
+        tx_rx_split: Dict[str, float] = {'tx':0.44, 'rx':0.56},
     ) -> pd.DataFrame:
         # Find the delays associated with the ranging tags for every measurement
         from_delay = np.array([delays[x] for x in np.array(df["from_id"])])
@@ -56,7 +56,7 @@ class ApplyCalibration():
     def antenna_delays_passive(
         df: pd.DataFrame, 
         delays: Dict[int, float],
-        tx_rx_split: Dict[str, float] = {'tx':0.6, 'rx':0.4},
+        tx_rx_split: Dict[str, float] = {'tx':0.44, 'rx':0.56},
     ) -> pd.DataFrame:
         # Find the delays associated with the ranging tags for every measurement
         delay = np.array([delays[x] for x in np.array(df["my_id"])])
@@ -308,7 +308,7 @@ class UwbCalibrate(PostProcess):
     def calibrate_antennas(
         self, 
         loss='cauchy', 
-        tx_rx_split={'tx':0.6, 'rx':0.4},
+        tx_rx_split={'tx':0.44, 'rx':0.56},
         inplace = False,
     ) -> Dict[Any, float]:
         """Estimate the antenna delays for the UWB tags, and correct the corresponding timestamps.
@@ -338,7 +338,7 @@ class UwbCalibrate(PostProcess):
             Loss function to be used in scipy.interpolate.least_squares, by default 'cauchy'
         tx_rx_split: dict, optional
             Splitting the calibrated delay between transmission and reception delay, 
-            by default {'tx':0.6, 'rx':0.4} based on 
+            by default {'tx':0.44, 'rx':0.56} based on 
             "Decawave (2018), APS014: DW1000 Antenna Delay Calibration Version 1.2. 1.15."
         inplace: bool, optional
             Whether to apply the calibration directly to the object, by default False.

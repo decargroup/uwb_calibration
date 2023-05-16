@@ -118,3 +118,8 @@ def get_bias(df) -> float:
             The computed bias.
         """
         return df['range'] - df['gt_range']
+    
+def find_nearest_idx(array, value):
+    array = np.asarray(array)
+    idx = (np.abs(array - value)).argmin()
+    return idx

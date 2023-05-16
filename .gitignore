@@ -20,3 +20,4 @@ calib_results.pickle
 data.pickle
 scripts/.ipynb_checkpoints
 docs/build
+kf_data.pickle
