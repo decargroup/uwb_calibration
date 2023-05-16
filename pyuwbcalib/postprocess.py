@@ -575,7 +575,12 @@ class PostProcess(object):
         self,
         df_unwrapped: pd.DataFrame,
     ):
-        for tpl in product([0,1,2],repeat=2):
+        if self.passive_listening:
+            possible_types = [0,1,2]
+        else:
+            possible_types = [0,1]
+            
+        for tpl in product(possible_types,repeat=2):
             self._update_df_per_type(df_unwrapped,*tpl)
 
     def _update_df_per_type(
@@ -685,6 +690,7 @@ class PostProcess(object):
             possible_types = (0,1,2)
         else:
             possible_types = (0,1)
+
         for type_id in possible_types:
             for ts_instance_id in possible_types:
                 data[(types == type_id) & (ts_instances == ts_instance_id)] \
