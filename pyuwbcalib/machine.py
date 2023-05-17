@@ -97,13 +97,9 @@ class Machine(object):
                 self.passive_topic = configs['LISTENING_TOPIC'][str(id)]
         
         # Retrieve the message fields for the UWB data
-        self.uwb_fields = [
-            configs['UWB_MESSAGE'][key] for key in configs['UWB_MESSAGE'].keys()
-        ]
+        self.uwb_fields = configs['UWB_MESSAGE']
         if self.passive_listening:
-            self.passive_fields = [
-                configs['LISTENING_MESSAGE'][key] for key in configs['LISTENING_MESSAGE'].keys()
-            ]
+            self.passive_fields = configs['LISTENING_MESSAGE']
         
     def convert_uwb_timestamps(self) -> None:
         """Covert UWB timestamps to nanoseconds.
@@ -173,6 +169,21 @@ class Machine(object):
             ],
             inplace=True,
         )
+        
+    def rename_fields(self) -> None:
+        """This replaces the UWB fields based on the mapping in the config files. 
+        """
+        for key in self.uwb_fields.keys():
+            if key not in self.df_uwb.columns:
+                value = self.uwb_fields[key]
+                self.df_uwb[key] = self.df_uwb[value]
+                self.df_uwb.drop(columns=[value], inplace=True)
+                
+        for key in self.passive_fields.keys():
+            if key not in self.df_passive.columns:
+                value = self.passive_fields[key]
+                self.df_passive[key] = self.df_passive[value]
+                self.df_passive.drop(columns=[value], inplace=True)
         
 class RosMachine(Machine):
     """A class to handle ROS machines recording pose and UWB data in rosbags.
@@ -277,6 +288,7 @@ class RosMachine(Machine):
 
         # Read the ground-truth and UWB data
         self.df_pose, self.df_uwb, self.df_passive = self._read_data()
+        self.rename_fields()
         
         # pre-process data
         self.merge_pose_data()

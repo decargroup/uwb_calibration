@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 from pylie import SO3
-from .utils import interpolate
+from .utils import interpolate, get_bias, find_nearest_idx
 from .machine import Machine
 from typing import List, Any
 from itertools import product
@@ -404,7 +404,7 @@ class PostProcess(object):
 
         # Compute and store the range bias.
         self.df['bias'] = self.df.apply(
-            self._get_bias, 
+            get_bias, 
             axis=1
         )
         
@@ -473,22 +473,6 @@ class PostProcess(object):
             - r_1w_a
             - C_a1 @ r_t1_1
         )
-        
-    @staticmethod 
-    def _get_bias(df) -> float:
-        """Get the ranging bias.
-
-        Parameters
-        ----------
-        df: pd.dataframe
-            Dataframe containing range and ground truth range (gt_range).
-
-        Returns
-        -------
-        pd.dataframe
-            The computed bias.
-        """
-        return df['range'] - df['gt_range']
 
     def _get_pairs(self) -> None:
         """Save the ranging pair for every measurement, and get a list of all unique
@@ -500,6 +484,7 @@ class PostProcess(object):
     def _compute_intervals(self) -> None:
         """Compute the timestamp intervals.
         # TODO: compute intervals associated with passive listening.
+        # TODO: maybe remove this completely and let the User compute these whenever needed. Just use timestamps. Or have this as a util to be used by the user if needed.
         """
         self.df["del_t1"] = self.df['rx2'] - self.df['tx1']
         self.df["del_t2"] = self.df['tx2'] - self.df['rx1']
@@ -556,6 +541,8 @@ class PostProcess(object):
     ):
         df_merged = pd.DataFrame()
         for i,df in enumerate(df_list):
+            if df is None:
+                continue
             df_base = pd.DataFrame()
             df_base["index_og"] = df.index
             df_base["type"] = i
@@ -580,7 +567,7 @@ class PostProcess(object):
         df_merged.reset_index(inplace=True,drop=True)
 
         df_merged = self._unwrap(df_merged,max_ts_ns)
-        df_merged = self._long_interval_unwrap(df_merged,max_ts_ns)
+        # df_merged = self._long_interval_unwrap(df_merged,max_ts_ns)
 
         return df_merged
 
@@ -588,7 +575,12 @@ class PostProcess(object):
         self,
         df_unwrapped: pd.DataFrame,
     ):
-        for tpl in product([0,1,2],repeat=2):
+        if self.passive_listening:
+            possible_types = [0,1,2]
+        else:
+            possible_types = [0,1]
+            
+        for tpl in product(possible_types,repeat=2):
             self._update_df_per_type(df_unwrapped,*tpl)
 
     def _update_df_per_type(
@@ -611,8 +603,9 @@ class PostProcess(object):
             self.df.loc[idx, ts_name] \
                 = np.array(df["ts"])
 
-    @staticmethod
+    # @staticmethod
     def _unwrap(
+        self,
         df: pd.DataFrame, 
         max: float, 
         iter: int = 0,
@@ -693,9 +686,100 @@ class PostProcess(object):
                 iter += 1
             data[lv0] += iter*max    
 
+        if self.passive_listening:
+            possible_types = (0,1,2)
+        else:
+            possible_types = (0,1)
+
+        for type_id in possible_types:
+            for ts_instance_id in possible_types:
+                data[(types == type_id) & (ts_instances == ts_instance_id)] \
+                    = self.ensure_linear(
+                        data[(types == type_id) & (ts_instances == ts_instance_id)].copy(), 
+                        time[(types == type_id) & (ts_instances == ts_instance_id)].copy(), 
+                        max
+                    )
+                
+        data_ref = data[(types == 0) & (ts_instances == 0)]
+        time_ref = time[(types == 0) & (ts_instances == 0)]
+        t_ref = time_ref[50]
+        d_ref = data_ref[50] 
+        for type_id in possible_types:
+            if (type_id == 0):
+                continue
+             
+            data_iter = data[(types == type_id) & (ts_instances == ts_instance_id)]
+            time_iter = time[(types == type_id) & (ts_instances == ts_instance_id)] 
+
+            idx = find_nearest_idx(np.array(time_iter), t_ref)
+            d_iter = data_iter[idx]
+            
+            e1 = np.abs(d_iter - d_ref)
+            e2 = np.abs(d_iter + max - d_ref)
+            e3 = np.abs(d_iter - max - d_ref)
+            
+            if np.min([e1,e2,e3]) == e2:
+                data[(types == type_id)] += max
+            elif np.min([e1,e2,e3]) == e3:
+                data[(types == type_id)] -= max
+
         df["ts"] = data
 
         return df
+
+    @staticmethod
+    def ensure_linear(data, time, max):
+        t_tx1 = (time)*1e9
+        offset = data - t_tx1
+        offset_delta = np.abs(offset[1:] - offset[:-1])
+        diff_from_max = max - offset_delta
+        idx_list = np.where(diff_from_max < (max/10))[0]
+
+        while len(idx_list)>0:
+            idx = idx_list[0]
+            if (offset[idx+1] - offset[idx]) < 0:
+                data[idx+1:] += max
+                offset[idx+1:] += max 
+                offset_delta = np.abs(offset[1:] - offset[:-1])
+                diff_from_max = max - offset_delta
+                idx_list = list(np.where(diff_from_max < (max/10))[0])
+            else:
+                data[idx+1:] -= max
+                offset[idx+1:] -= max 
+                offset_delta = np.abs(offset[1:] - offset[:-1])
+                diff_from_max = max - offset_delta
+                idx_list = list(np.where(diff_from_max < (max/10))[0])
+
+        # DO THIS ONE AT A TIME. AFTER EVERY += MAX OR -= MAX, RECOMPUTE OFFSETS
+
+        # slope = []
+        # for i,x in enumerate(data[1:-1]):
+        #     slope = (x - data[i])/(time[i+1] - time[i])
+        #     # slope_future = (data[i+2] - data[i])/(time[i+2] - time[i])
+
+        #     if slope < 0.5*1e9:
+        #         # if slope_future < 0.5*1e9:
+        #             # data[i+1:] += max
+        #         # else:
+        #         data[i+1] += max
+        #     if slope > 1.5*1e9:
+        #         # if slope_future > 1.5*1e9:
+        #             # data[i+1:] -= max
+        #         # else:
+        #         data[i+1] -= max
+        #     else:
+        #         "nada"
+
+
+        # idx_low = np.where((np.array(slope) < 0.5*1e9))[0]
+        # idx_high = np.where((np.array(slope) > 1.5*1e9))[0]
+        # for i in idx_low:
+        #     data[i:] += max
+        # for i in idx_high:
+        #     data[i:] -= max
+
+        return data
+
 
     @staticmethod
     def _long_interval_unwrap(
