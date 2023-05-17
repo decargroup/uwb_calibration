@@ -26,12 +26,16 @@ calib.calibrate_antennas(inplace=True)
 bias_antenna_delay = np.array(calib.df['bias'])
 
 # Correct power-correlated bias
-calib.fit_power_model(inplace=True)
+calib.fit_power_model(
+    inplace = True,
+    visualize = True
+)
 
 # Compute the fully-calibrated measurements
 bias_fully_calib = np.array(calib.df['bias'])
 # %%
 # Plot the measurements pre- and post-correction.
+plt.figure()
 bins = np.linspace(-0.5,1,100)
 plt.hist(bias_raw,bins=bins, alpha=0.5, density=True)
 plt.hist(bias_antenna_delay, bins=bins, alpha=0.5, density=True)

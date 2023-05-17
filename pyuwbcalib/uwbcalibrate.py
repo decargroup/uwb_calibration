@@ -6,6 +6,7 @@ from scipy.optimize import least_squares
 import pickle
 import pandas as pd
 from .utils import compute_range_meas, get_bias
+import matplotlib.pyplot as plt 
 
 class ApplyCalibration():
 
@@ -468,6 +469,7 @@ class UwbCalibrate(PostProcess):
         std_window=25,
         thresh={'bias': 0.3, 'std': 3},
         inplace: bool = False,
+        visualize: bool = False,
     ) -> Tuple[UnivariateSpline, UnivariateSpline]:
         """Fit the bias vs power and standard deviation vs power splines, and 
         correct the range measurements.
@@ -509,6 +511,8 @@ class UwbCalibrate(PostProcess):
             by default {'bias': 0.3, 'std': 3}
         inplace: bool, optional
             Whether to apply the calibration directly to the object, by default False.
+        visualize: bool, optional
+            Whether to visualize the calibration directly, by default False.
 
         Returns
         -------
@@ -526,28 +530,55 @@ class UwbCalibrate(PostProcess):
         sort_pr = np.argsort(lifted_pr)
         bias = np.array(self.df['bias'])[sort_pr]
         lifted_pr = lifted_pr[sort_pr]
+        
+        # Remove unreasonably large power values from the calibration
+        bias = bias[lifted_pr < 2]
+        lifted_pr = lifted_pr[lifted_pr < 2]
 
         # Bias vs. FPP: Remove outliers and fit a spline
-        lifted_pr_inl, bias_inl = \
-                self.remove_outliers(lifted_pr, 
-                                     bias, 
-                                     thresh['bias'])
-        self.bias_spl = self.fit_spline(lifted_pr_inl, 
-                                        bias_inl)
+        lifted_pr_inl, bias_inl = self.remove_outliers(
+            lifted_pr, 
+            bias, 
+            thresh['bias']
+        )
+        self.bias_spl = self.fit_spline(
+            lifted_pr_inl, 
+            bias_inl
+        )
+
+        if visualize:
+            plt.scatter(lifted_pr, bias, label = "Raw")
+            plt.scatter(lifted_pr_inl, bias_inl, label = "Inliers")
+            plt.scatter(lifted_pr_inl, self.bias_spl(lifted_pr_inl), label = "Spline fit")
+            plt.legend()
 
         # Standard deviation vs. FPP: Remove outliers and fit a spline
-        lifted_pr_inl, bias_inl = \
-                self.remove_outliers(lifted_pr, 
-                                     bias, 
-                                     thresh['std'])
+        lifted_pr_inl, bias_inl = self.remove_outliers(
+            lifted_pr, 
+            bias, 
+            thresh['std']
+        )
         std = pd.DataFrame(bias_inl).rolling(std_window).std()
         std = std.fillna(method="bfill").fillna(method="ffill").to_numpy()
-        self.std_spl = self.fit_spline(lifted_pr_inl, 
-                                       std,
-                                       k=4)
+        self.std_spl = self.fit_spline(
+            lifted_pr_inl, 
+            std,
+            k=4
+        )
+
+        if visualize:
+            _, axs = plt.subplots(2, 1, sharex = True)
+            axs[0].scatter(lifted_pr, bias, label = "Raw")
+            axs[0].scatter(lifted_pr_inl, bias_inl, label = "Inliers")
+            axs[1].scatter(lifted_pr_inl, std, label = "Raw Std")
+            axs[1].scatter(lifted_pr_inl, self.std_spl(lifted_pr_inl), label = "Spline Std")
+            axs[0].legend()
+            axs[1].legend()
+            
+            plt.show()
 
         # Undo sort
-        lifted_pr_unsorted = lifted_pr[np.argsort(sort_pr)]
+        # lifted_pr_unsorted = lifted_pr[np.argsort(sort_pr)]
 
         # Update the main dataframe with the calibration results
         if inplace:
@@ -618,9 +649,11 @@ class UwbCalibrate(PostProcess):
         UnivariateSpline
             The fitted spline.
         """
-        return UnivariateSpline(x, 
-                                y, 
-                                k=k)
+        return UnivariateSpline(
+            x, 
+            y, 
+            k=k
+        )
 
     def save_calib_results(
         self, 
