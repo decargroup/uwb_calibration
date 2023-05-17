@@ -1,9 +1,10 @@
 import numpy as np
 import pandas as pd
 from pylie import SO3
-from .utils import interpolate
+from .utils import interpolate, get_bias, find_nearest_idx
 from .machine import Machine
-from typing import List
+from typing import List, Any
+from itertools import product
 
 class PostProcess(object):
     """A class to process pose and UWB data from multiple UWB tags.
@@ -162,6 +163,12 @@ class PostProcess(object):
             If pairs are merged together irrespective of whom of the pair initiates, 
             by default False
         """
+        # TODO: this should come from the configs file
+        self.ts_names_list = [
+            ["tx1", "rx2", "rx3"],
+            ["rx1", "tx2", "tx3"],
+            ["rx1", "rx2", "rx3"],
+        ]
         self.merge_pairs = merge_pairs
         self._save_params(machines)    
         self._process_data(machines)
@@ -304,17 +311,22 @@ class PostProcess(object):
                                              )
 
         # Drop overlapping fields between the two dataframes
-        self.df_passive.drop(columns=['tx1_n',
-                                      'tx2_n',
-                                      'tx3_n',
-                                      'rx1_n',
-                                      'rx2_n',
-                                      'rx3_n',],
-                             inplace=True)
+        self.df_passive.drop(
+            columns=[
+                'tx1_n',
+                'tx2_n',
+                'tx3_n',
+                'rx1_n',
+                'rx2_n',
+                'rx3_n',
+            ],
+            inplace=True
+        )
 
         # Drop any passive listening measurements corresponding to
         # missed TWR measurements.
         self.df_passive.dropna(subset=["idx"], inplace=True)
+        self.df_passive.reset_index(inplace=True, drop=True)
     
     def _match_tx_ts(self, row):
         """Find the row in df_uwb corresponding to a single entry in df_passive.
@@ -392,7 +404,7 @@ class PostProcess(object):
 
         # Compute and store the range bias.
         self.df['bias'] = self.df.apply(
-            self._get_bias, 
+            get_bias, 
             axis=1
         )
         
@@ -461,22 +473,6 @@ class PostProcess(object):
             - r_1w_a
             - C_a1 @ r_t1_1
         )
-        
-    @staticmethod 
-    def _get_bias(df) -> float:
-        """Get the ranging bias.
-
-        Parameters
-        ----------
-        df: pd.dataframe
-            Dataframe containing range and ground truth range (gt_range).
-
-        Returns
-        -------
-        pd.dataframe
-            The computed bias.
-        """
-        return df['range'] - df['gt_range']
 
     def _get_pairs(self) -> None:
         """Save the ranging pair for every measurement, and get a list of all unique
@@ -488,6 +484,7 @@ class PostProcess(object):
     def _compute_intervals(self) -> None:
         """Compute the timestamp intervals.
         # TODO: compute intervals associated with passive listening.
+        # TODO: maybe remove this completely and let the User compute these whenever needed. Just use timestamps. Or have this as a util to be used by the user if needed.
         """
         self.df["del_t1"] = self.df['rx2'] - self.df['tx1']
         self.df["del_t2"] = self.df['tx2'] - self.df['rx1']
@@ -516,94 +513,108 @@ class PostProcess(object):
         max_ts_ns = self.max_ts_value * self.ts_to_ns
 
         ### Unwrap TWR timestamps
-        for pair in self.pair_list: 
-            df_iter = self.df[self.df['pair']==pair].copy()
-            
-            iter_rx2 = 0
-            iter_tx2 = 0
-            iter_tx3 = 0
-            iter_rx3 = 0
-            
-            # Check if a clock wrap occured at the first measurement, and unwrap
-            if df_iter['rx2'].iloc[0] < df_iter['tx1'].iloc[0]:
-                df_iter['rx2'].iloc[0] += max_ts_ns
-                iter_rx2 = 1
-                iter_rx3 = 1
-                
-            if df_iter['tx2'].iloc[0] < df_iter['rx1'].iloc[0]:
-                df_iter['tx2'].iloc[0] += max_ts_ns
-                iter_tx2 = 1
-                iter_tx3 = 1
+        for tag in self.moment_arms:
+            df_from = self.df[self.df["from_id"]==tag].copy()
+            df_to = self.df[self.df["to_id"]==tag].copy()
+            if self.passive_listening:
+                df_passive = self.df_passive[self.df_passive["my_id"]==tag].copy()
+                df_passive["time"] = np.array(self.df.loc[df_passive["idx"],"time"]) # TODO: turns out passive listening timestamps aren't reliably timestamped
+            else:
+                df_passive = None
+            df_list = [
+                df_from,
+                df_to,
+                df_passive, 
+            ]
+            df_merged = self._unwrap_tag(
+                df_list,
+                max_ts_ns,
+            )
+            self._update_df(df_merged)
 
-            if self.ds_twr:
-                if df_iter['tx3'].iloc[0] < df_iter['tx2'].iloc[0]:
-                    df_iter['tx3'].iloc[0] += max_ts_ns
-                    iter_tx3 = 1
+        return None
+     
+    def _unwrap_tag(
+        self,
+        df_list: List[pd.DataFrame],
+        max_ts_ns: float,
+    ):
+        df_merged = pd.DataFrame()
+        for i,df in enumerate(df_list):
+            if df is None:
+                continue
+            df_base = pd.DataFrame()
+            df_base["index_og"] = df.index
+            df_base["type"] = i
+            df_base["time"] = np.array(df["time"])
 
-                if df_iter['rx3'].iloc[0] < df_iter['rx2'].iloc[0]:
-                    df_iter['rx3'].iloc[0] += max_ts_ns
-                    iter_rx3 = 1
+            dfs = []
+            for j,ts_name in enumerate(self.ts_names_list[i]):
+                dfs += [df_base.copy()]
+                dfs[j]["ts_instance"] = j
+                dfs[j]["ts"] = np.array(df[ts_name])
 
-            # Individual unwraps
-            df_iter['tx1'] = self._unwrap(df_iter['tx1'], max_ts_ns)
-            df_iter['rx1'] = self._unwrap(df_iter['rx1'], max_ts_ns)
-            df_iter['tx2'] = self._unwrap(df_iter['tx2'], max_ts_ns, iter=iter_tx2)
-            df_iter['rx2'] = self._unwrap(df_iter['rx2'], max_ts_ns, iter=iter_rx2)
-            if self.ds_twr:
-                df_iter['tx3'] = self._unwrap(df_iter['tx3'], max_ts_ns, iter=iter_tx3)
-                df_iter['rx3'] = self._unwrap(df_iter['rx3'], max_ts_ns, iter=iter_rx3)
-            
-            df_iter = self._long_interval_unwrap(df_iter, max_ts_ns)
+            df_new = pd.concat(dfs)
+            df_merged = pd.concat([df_merged, df_new])
 
-            # 
-            self.df[self.df['pair']==pair] = df_iter
+        # Sort by time and ts_instance
+        df_merged.reset_index(inplace=True,drop=True)
+        df_merged.sort_values(
+            ['time', 'ts_instance'], 
+            ascending=[True, True],
+            inplace=True,
+        )
+        df_merged.reset_index(inplace=True,drop=True)
 
+        df_merged = self._unwrap(df_merged,max_ts_ns)
+        # df_merged = self._long_interval_unwrap(df_merged,max_ts_ns)
+
+        return df_merged
+
+    def _update_df(
+        self,
+        df_unwrapped: pd.DataFrame,
+    ):
         if self.passive_listening:
-            ### Unwrap passive timestamps
+            possible_types = [0,1,2]
+        else:
+            possible_types = [0,1]
+            
+        for tpl in product(possible_types,repeat=2):
+            self._update_df_per_type(df_unwrapped,*tpl)
 
-            all_tags = np.concatenate([self.tag_ids[machine] for machine in self.machine_ids])
-            for tag in all_tags: 
-                df_iter = self.df_passive[self.df_passive['my_id']==tag].copy()
-                iter_rx2 = 0
-                iter_rx3 = 0
-                
-                # Check if a clock wrap occured at the first measurement, and unwrap
-                if df_iter['rx2'].iloc[0] < df_iter['rx1'].iloc[0]:
-                    df_iter['rx2'].iloc[0] += max_ts_ns
-                    iter_rx2 = 1
-                    iter_rx3 = 1
+    def _update_df_per_type(
+        self,
+        df_unwrapped: pd.DataFrame,
+        type: int,
+        ts_instance: int,
+    ):
+        df = df_unwrapped[
+            (df_unwrapped["type"]==type) 
+            & (df_unwrapped["ts_instance"]==ts_instance)
+        ]
+        ts_name = self.ts_names_list[type][ts_instance]
+        if self.passive_listening and type==2:
+            idx = self.df_passive.index.isin(df["index_og"])
+            self.df_passive.loc[idx, ts_name] \
+                = np.array(df["ts"])
+        elif type != 2:
+            idx = self.df.index.isin(df["index_og"])
+            self.df.loc[idx, ts_name] \
+                = np.array(df["ts"])
 
-                if self.ds_twr:
-                    if df_iter['rx3'].iloc[0] < df_iter['rx2'].iloc[0]:
-                        df_iter['rx3'].iloc[0] += max_ts_ns
-                        iter_rx3 = 1
-
-                # Individual unwraps
-                df_iter['rx1'] = self._unwrap(df_iter['rx1'], max_ts_ns)
-                df_iter['rx2'] = self._unwrap(df_iter['rx2'], max_ts_ns, iter=iter_rx2)
-                if self.ds_twr:
-                    df_iter['rx3'] = self._unwrap(df_iter['rx3'], max_ts_ns, iter=iter_rx3)
-                
-                df_iter = self._long_interval_unwrap(
-                    df_iter, 
-                    max_ts_ns,
-                    passive = True,
-                )
-
-                # 
-                self.df_passive[self.df_passive['my_id']==tag] = df_iter
-
-    @staticmethod
+    # @staticmethod
     def _unwrap(
-        data, 
-        max, 
-        iter=0
-    ) -> np.ndarray:
+        self,
+        df: pd.DataFrame, 
+        max: float, 
+        iter: int = 0,
+    ) -> pd.DataFrame:
         """Unwrap one clock by finding instances where the timestamp decreases.
 
         Parameters
         ----------
-        data: pd.dataframe
+        data: pd.DataFrame
             Data corresponding to one clock.
         max: float
             The maximum timestamp value before unwrapping, in nanoseconds.
@@ -612,11 +623,14 @@ class PostProcess(object):
 
         Returns
         -------
-        np.ndarray
-            Unwrapped timestamps.
+        pd.DataFrame
+            Unwrapped data corresponding to one clock.
         """
         # Convert to np.ndarray
-        data = np.array(data)
+        data = np.array(df["ts"])
+        time = np.array(df["time"])
+        types = np.array(df["type"])
+        ts_instances = np.array(df["ts_instance"])
         
         # Find indices associated with negative deltas.
         temp = data[1:] - data[:-1]
@@ -624,17 +638,153 @@ class PostProcess(object):
 
         # Unwrap by adding the max value whenever a negative delta occurs.
         for lv0, _ in enumerate(data):
-            if idx[lv0]:
+            if idx[lv0] and lv0>25:
+                # Check if unwrapping fits better a straight line w.r.t. ROS time
+                type_iter = types[lv0]
+                ts_instance_iter = ts_instances[lv0]
+                idx_iter = lv0 - 1
+                found = False
+                while not found:
+                    if (
+                        (types[idx_iter] == type_iter) \
+                        and (ts_instances[idx_iter] == ts_instance_iter)
+                    ):
+                        idx1 = idx_iter
+                        found = True
+                    else:
+                        idx_iter -= 1
+
+                idx_iter -= 1
+                found = False
+                while not found:
+                    if (
+                        (types[idx_iter] == type_iter) \
+                        and (ts_instances[idx_iter] == ts_instance_iter)
+                    ):
+                        idx0 = idx_iter
+                        found = True
+                    else:
+                        idx_iter -= 1
+
+                ts0 = data[idx0]
+                t0 = time[idx0]
+                ts1 = data[idx1]
+                t1 = time[idx1]
+                ts = data[lv0]
+                t = time[lv0]
+                e1 = np.abs(
+                    ((ts1 - ts0) / (t1 - t0) * (t-t1) + ts1) \
+                    - (ts + (iter+1)*max)
+                )
+                e2 = np.abs(
+                    ((ts1 - ts0) / (t1 - t0) * (t-t1) + ts1) \
+                    - (ts + iter*max)
+                )
+                if (e1 < e2):
+                    iter += 1
+            elif idx[lv0]:
                 iter += 1
             data[lv0] += iter*max    
 
+        if self.passive_listening:
+            possible_types = (0,1,2)
+        else:
+            possible_types = (0,1)
+
+        for type_id in possible_types:
+            for ts_instance_id in possible_types:
+                data[(types == type_id) & (ts_instances == ts_instance_id)] \
+                    = self.ensure_linear(
+                        data[(types == type_id) & (ts_instances == ts_instance_id)].copy(), 
+                        time[(types == type_id) & (ts_instances == ts_instance_id)].copy(), 
+                        max
+                    )
+                
+        data_ref = data[(types == 0) & (ts_instances == 0)]
+        time_ref = time[(types == 0) & (ts_instances == 0)]
+        t_ref = time_ref[50]
+        d_ref = data_ref[50] 
+        for type_id in possible_types:
+            if (type_id == 0):
+                continue
+             
+            data_iter = data[(types == type_id) & (ts_instances == ts_instance_id)]
+            time_iter = time[(types == type_id) & (ts_instances == ts_instance_id)] 
+
+            idx = find_nearest_idx(np.array(time_iter), t_ref)
+            d_iter = data_iter[idx]
+            
+            e1 = np.abs(d_iter - d_ref)
+            e2 = np.abs(d_iter + max - d_ref)
+            e3 = np.abs(d_iter - max - d_ref)
+            
+            if np.min([e1,e2,e3]) == e2:
+                data[(types == type_id)] += max
+            elif np.min([e1,e2,e3]) == e3:
+                data[(types == type_id)] -= max
+
+        df["ts"] = data
+
+        return df
+
+    @staticmethod
+    def ensure_linear(data, time, max):
+        t_tx1 = (time)*1e9
+        offset = data - t_tx1
+        offset_delta = np.abs(offset[1:] - offset[:-1])
+        diff_from_max = max - offset_delta
+        idx_list = np.where(diff_from_max < (max/10))[0]
+
+        while len(idx_list)>0:
+            idx = idx_list[0]
+            if (offset[idx+1] - offset[idx]) < 0:
+                data[idx+1:] += max
+                offset[idx+1:] += max 
+                offset_delta = np.abs(offset[1:] - offset[:-1])
+                diff_from_max = max - offset_delta
+                idx_list = list(np.where(diff_from_max < (max/10))[0])
+            else:
+                data[idx+1:] -= max
+                offset[idx+1:] -= max 
+                offset_delta = np.abs(offset[1:] - offset[:-1])
+                diff_from_max = max - offset_delta
+                idx_list = list(np.where(diff_from_max < (max/10))[0])
+
+        # DO THIS ONE AT A TIME. AFTER EVERY += MAX OR -= MAX, RECOMPUTE OFFSETS
+
+        # slope = []
+        # for i,x in enumerate(data[1:-1]):
+        #     slope = (x - data[i])/(time[i+1] - time[i])
+        #     # slope_future = (data[i+2] - data[i])/(time[i+2] - time[i])
+
+        #     if slope < 0.5*1e9:
+        #         # if slope_future < 0.5*1e9:
+        #             # data[i+1:] += max
+        #         # else:
+        #         data[i+1] += max
+        #     if slope > 1.5*1e9:
+        #         # if slope_future > 1.5*1e9:
+        #             # data[i+1:] -= max
+        #         # else:
+        #         data[i+1] -= max
+        #     else:
+        #         "nada"
+
+
+        # idx_low = np.where((np.array(slope) < 0.5*1e9))[0]
+        # idx_high = np.where((np.array(slope) > 1.5*1e9))[0]
+        # for i in idx_low:
+        #     data[i:] += max
+        # for i in idx_high:
+        #     data[i:] -= max
+
         return data
+
 
     @staticmethod
     def _long_interval_unwrap(
         df: pd.DataFrame, 
         max: float, 
-        passive: bool = False,
     ) -> np.ndarray:
         """Unwrap one clock by finding instances where the passage of time between two
         readings of this clock is longer than the period of the clock.
@@ -655,31 +805,66 @@ class PostProcess(object):
         """
         # Need to first reindex the dataframe 
         df.reset_index(inplace=True)
-        mult_wrap_idx = df.index[df['time'].diff()>0.065].tolist()
+        mult_wrap_idx = df.index[df['time'].diff()>0.0665].tolist()
 
         for idx in mult_wrap_idx:
             dt = df.iloc[idx]['time'] - df.iloc[idx-1]['time']
-
-            if passive:
-                dt_rx1 = (df.iloc[idx]['rx1'] - df.iloc[idx-1]['rx1'])/1e9
-                n = np.round((dt - dt_rx1)/(max/1e9))
-                df.iloc[idx::]['rx1'] += n*max
-                df.iloc[idx::]['rx2'] += n*max
-                df.iloc[idx::]['rx3'] += n*max
-            else:
-                dt_tx1 = (df.iloc[idx]['tx1'] - df.iloc[idx-1]['tx1'])/1e9
-                n = np.round((dt - dt_tx1)/(max/1e9))
-                df.iloc[idx::]['tx1'] += n*max
-                df.iloc[idx::]['rx2'] += n*max
-                df.iloc[idx::]['rx3'] += n*max
-
-                dt_rx1 = (df.iloc[idx]['rx1'] - df.iloc[idx-1]['rx1'])/1e9
-                n = np.round((dt - dt_rx1)/(max/1e9))
-                df.iloc[idx::]['rx1'] += n*max
-                df.iloc[idx::]['tx2'] += n*max
-                df.iloc[idx::]['tx3'] += n*max
+            dt_ts = (df.iloc[idx]['ts'] - df.iloc[idx-1]['ts'])/1e9
+            n = np.round((dt - dt_ts)/(max/1e9))
+            df.iloc[idx::]['ts'] += n*max
 
         return df.set_index("index")
+
+    # @staticmethod
+    # def _long_interval_unwrap(
+    #     df: pd.DataFrame, 
+    #     max: float, 
+    #     passive: bool = False,
+    # ) -> np.ndarray:
+    #     """Unwrap one clock by finding instances where the passage of time between two
+    #     readings of this clock is longer than the period of the clock.
+
+    #     Parameters
+    #     ----------
+    #     data: pd.dataframe
+    #         Data corresponding to one clock.
+    #     max: float
+    #         The maximum timestamp value before unwrapping, in nanoseconds.
+    #     passive: bool, optional
+    #         If the timestamps are those of passive listening measurements, by default False.
+
+    #     Returns
+    #     -------
+    #     np.ndarray
+    #         Unwrapped timestamps.
+    #     """
+    #     # Need to first reindex the dataframe 
+    #     df.reset_index(inplace=True)
+    #     mult_wrap_idx = df.index[df['time'].diff()>0.065].tolist()
+
+    #     for idx in mult_wrap_idx:
+    #         dt = df.iloc[idx]['time'] - df.iloc[idx-1]['time']
+
+    #         if passive:
+    #             dt_rx1 = (df.iloc[idx]['rx1'] - df.iloc[idx-1]['rx1'])/1e9
+    #             n = np.round((dt - dt_rx1)/(max/1e9))
+    #             df.iloc[idx::]['rx1'] += n*max
+    #             df.iloc[idx::]['rx2'] += n*max
+    #             df.iloc[idx::]['rx3'] += n*max
+    #         else:
+    #             dt_tx1 = (df.iloc[idx]['tx1'] - df.iloc[idx-1]['tx1'])/1e9
+    #             n = np.round((dt - dt_tx1)/(max/1e9))
+    #             df.iloc[idx::]['tx1'] += n*max
+    #             df.iloc[idx::]['rx2'] += n*max
+    #             df.iloc[idx::]['rx3'] += n*max
+
+    #             dt_rx1 = (df.iloc[idx]['rx1'] - df.iloc[idx-1]['rx1'])/1e9
+    #             n = np.round((dt - dt_rx1)/(max/1e9))
+    #             df.iloc[idx::]['rx1'] += n*max
+    #             df.iloc[idx::]['tx2'] += n*max
+    #             df.iloc[idx::]['tx3'] += n*max
+
+    #     return df.set_index("index")
 
     ### ------------------------------------------------------------------------ ###
     

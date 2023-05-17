@@ -1,11 +1,130 @@
-from typing import Tuple
+from typing import Tuple, Dict, Any
 import numpy as np
 from .postprocess import PostProcess
 from scipy.interpolate import UnivariateSpline
 from scipy.optimize import least_squares
 import pickle
 import pandas as pd
+from .utils import compute_range_meas, get_bias
+import matplotlib.pyplot as plt 
 
+class ApplyCalibration():
+
+    def __init__():
+        raise NotImplementedError("This class is not mean to be initialized.")
+
+    @staticmethod
+    def antenna_delays(
+        df: pd.DataFrame, 
+        delays: Dict[int, float],
+        tx_rx_split: Dict[str, float] = {'tx':0.44, 'rx':0.56},
+    ) -> pd.DataFrame:
+        # Find the delays associated with the ranging tags for every measurement
+        from_delay = np.array([delays[x] for x in np.array(df["from_id"])])
+        to_delay = np.array([delays[x] for x in np.array(df["to_id"])])
+        
+        # Correct the intervals # TODO: remove
+        df["del_t1"] += from_delay
+        df["del_t2"] -= to_delay
+        
+        # Compute the individual delays
+        tx_from_delay = tx_rx_split['tx'] * from_delay
+        rx_from_delay = tx_rx_split['rx'] * from_delay
+        tx_to_delay = tx_rx_split['tx'] * to_delay
+        rx_to_delay = tx_rx_split['rx'] * to_delay
+
+        # Correct the individual timestamps
+        df["tx1"] += -tx_from_delay
+        df["rx2"] += rx_from_delay
+
+        df["rx1"] += rx_to_delay
+        df["tx2"] += -tx_to_delay
+
+        if 'tx3' in df.columns:
+            df["tx3"] += -tx_to_delay
+            df["rx3"] += rx_to_delay
+
+        # Correct the range measurements and bias
+        df['range'] = compute_range_meas(df)
+        df['bias'] = df.apply(
+            get_bias, 
+            axis=1
+        )
+
+        return df
+
+    @staticmethod
+    def antenna_delays_passive(
+        df: pd.DataFrame, 
+        delays: Dict[int, float],
+        tx_rx_split: Dict[str, float] = {'tx':0.44, 'rx':0.56},
+    ) -> pd.DataFrame:
+        # Find the delays associated with the ranging tags for every measurement
+        delay = np.array([delays[x] for x in np.array(df["my_id"])])
+        
+        # Compute the individual delays
+        rx_delay = tx_rx_split['rx'] * delay
+
+        # Correct the individual timestamps
+        df["rx1"] += rx_delay
+        df["rx2"] += rx_delay
+
+        if 'rx3' in df.columns:
+            df["rx3"] += rx_delay
+
+        return df
+
+    @staticmethod
+    def power(
+        df, 
+        bias_spl,
+        std_spl, 
+        f_lift = lambda x: 10**((x + 82)/10),
+    ):
+        # Speed of light
+        _c = 299702547 
+
+        lift_fpp1 = f_lift(np.array(df["fpp1"]))
+        lift_fpp2 = f_lift(np.array(df["fpp2"]))
+        lift_avg = 0.5*(lift_fpp1 + lift_fpp2)
+
+        df['std'] = std_spl(lift_avg) 
+        df['rx1'] -= bias_spl(lift_fpp1) / _c * 1e9
+        df['rx2'] -= bias_spl(lift_fpp2) / _c * 1e9
+        df['rx3'] -= bias_spl(lift_fpp2) / _c * 1e9 #TODO: Could read fpp3 in the future?
+
+        # Correct the range measurements and bias
+        df['range'] = compute_range_meas(df)
+        df['bias'] = df.apply(
+            get_bias, 
+            axis=1
+        )
+
+        return df
+
+    @staticmethod
+    def power_passive(
+        df, 
+        bias_spl,
+        std_spl, 
+        f_lift = lambda x: 10**((x + 82)/10),
+    ):
+        # Speed of light
+        _c = 299702547 
+
+        lift_fpp1 = f_lift(np.array(df["fpp1"]))
+        lift_fpp2 = f_lift(np.array(df["fpp2"]))
+        lift_fpp3 = f_lift(np.array(df["fpp3"]))
+        lift_avg = 1/3*(lift_fpp1 + lift_fpp2 + lift_fpp3)
+
+        df['std'] = std_spl(lift_avg) 
+        df['rx1'] -= bias_spl(lift_fpp1) / _c * 1e9
+        df['rx2'] -= bias_spl(lift_fpp2) / _c * 1e9
+        df['rx3'] -= bias_spl(lift_fpp3) / _c * 1e9 
+
+        return df
+
+    
 class UwbCalibrate(PostProcess):
     """A class to handle calibration of the UWB modules. 
 
@@ -25,9 +144,10 @@ class UwbCalibrate(PostProcess):
     bias_spl: UnivariateSpline
         The learnt "bias vs. lifted power" spline.
         Only exists after fit_power_model() is called.
-    std_spl: _type_
+    std_spl: UnivariateSpline
         The learnt "standard deviation vs. lifted power" spline.
         Only exists after fit_power_model() is called.
+    # TODO: find a better way to deal with the "only exists" fields above
 
     Examples
     --------
@@ -105,7 +225,7 @@ class UwbCalibrate(PostProcess):
         """Remove the static region in the extremes.
         """
         # Threshold for motion detection, in metres
-        thresh = 0.1
+        thresh = 0.1 # TODO: make this user-defined
 
         # Window size to compare measurements 
         window = 10 
@@ -189,8 +309,9 @@ class UwbCalibrate(PostProcess):
     def calibrate_antennas(
         self, 
         loss='cauchy', 
-        tx_rx_split={'tx':0.6, 'rx':0.4},
-    ) -> None:
+        tx_rx_split={'tx':0.44, 'rx':0.56},
+        inplace = False,
+    ) -> Dict[Any, float]:
         """Estimate the antenna delays for the UWB tags, and correct the corresponding timestamps.
 
         This corrects the following fields in self.df:
@@ -218,8 +339,15 @@ class UwbCalibrate(PostProcess):
             Loss function to be used in scipy.interpolate.least_squares, by default 'cauchy'
         tx_rx_split: dict, optional
             Splitting the calibrated delay between transmission and reception delay, 
-            by default {'tx':0.6, 'rx':0.4} based on 
+            by default {'tx':0.44, 'rx':0.56} based on 
             "Decawave (2018), APS014: DW1000 Antenna Delay Calibration Version 1.2. 1.15."
+        inplace: bool, optional
+            Whether to apply the calibration directly to the object, by default False.
+
+        Returns
+        -------
+        Dict[Any, float]
+            A dictionary of calibrated antenna delay values for every tag ID.
         """
         # Get IDs of all tags
         tags = list(np.concatenate(list(self.tag_ids.values())).flat)
@@ -254,49 +382,15 @@ class UwbCalibrate(PostProcess):
         # Separate the delays per tag
         self.delays = {id: x[i] for i,id in enumerate(tags)}
         
-        # Correct the stored range measurements and timestamps
-        self._correct_antenna_delays(tx_rx_split)
+        if inplace:
+            # Correct the stored range measurements and timestamps
+            self.df = ApplyCalibration.antenna_delays(
+                self.df, 
+                self.delays,
+                tx_rx_split
+            )
 
-    def _correct_antenna_delays(self, tx_rx_split) -> None:
-        """Correct the stored range measurements and timestamps by utilizing the
-        estimated tag-dependent antenna delays.
-
-        Parameters
-        ----------
-        tx_rx_split: dict
-            The split of the calibrated delay between transmission and reception delay.
-        """
-        # Find the delays associated with the ranging tags for every measurement
-        from_delay = np.array([self.delays[x] for x in np.array(self.df["from_id"])])
-        to_delay = np.array([self.delays[x] for x in np.array(self.df["to_id"])])
-        
-        # Correct the intervals
-        self.df["del_t1"] += from_delay
-        self.df["del_t2"] -= to_delay
-        
-        # Compute the individual delays
-        tx_from_delay = tx_rx_split['tx'] * from_delay
-        rx_from_delay = tx_rx_split['rx'] * from_delay
-        tx_to_delay = tx_rx_split['tx'] * to_delay
-        rx_to_delay = tx_rx_split['rx'] * to_delay
-
-        # Correct the individual timestamps
-        self.df["tx1"] = -tx_from_delay
-        self.df["rx2"] = rx_from_delay
-
-        self.df["rx1"] = rx_to_delay
-        self.df["tx2"] = -tx_to_delay
-
-        if self.ds_twr:
-            self.df["tx3"] = -tx_to_delay
-            self.df["rx3"] = rx_to_delay
-
-        # Correct the range measurements and bias
-        self.df['range'] = self.compute_range_meas()
-        self.df['bias'] = self.df.apply(
-            self._get_bias, 
-            axis=1
-        )
+        return self.delays
 
     def _solve_for_antenna_delays(
         self, 
@@ -373,8 +467,10 @@ class UwbCalibrate(PostProcess):
     def fit_power_model(
         self, 
         std_window=25,
-        thresh={'bias': 0.3, 'std': 3}
-    ) -> None:
+        thresh={'bias': 0.3, 'std': 3},
+        inplace: bool = False,
+        visualize: bool = False,
+    ) -> Tuple[UnivariateSpline, UnivariateSpline]:
         """Fit the bias vs power and standard deviation vs power splines, and 
         correct the range measurements.
 
@@ -413,6 +509,15 @@ class UwbCalibrate(PostProcess):
             values: float
                 The threshold used for this type of power-correlated calibration.
             by default {'bias': 0.3, 'std': 3}
+        inplace: bool, optional
+            Whether to apply the calibration directly to the object, by default False.
+        visualize: bool, optional
+            Whether to visualize the calibration directly, by default False.
+
+        Returns
+        -------
+        Tuple(UnivariateSpline, UnivariateSpline)
+            The fitted bias and standard deviation vs. lifted power splines.
         """
         # Get the average lifted power
         lifted_pr = self.get_avg_lifted_pr(
@@ -425,36 +530,66 @@ class UwbCalibrate(PostProcess):
         sort_pr = np.argsort(lifted_pr)
         bias = np.array(self.df['bias'])[sort_pr]
         lifted_pr = lifted_pr[sort_pr]
+        
+        # Remove unreasonably large power values from the calibration
+        bias = bias[lifted_pr < 2]
+        lifted_pr = lifted_pr[lifted_pr < 2]
 
         # Bias vs. FPP: Remove outliers and fit a spline
-        lifted_pr_inl, bias_inl = \
-                self.remove_outliers(lifted_pr, 
-                                     bias, 
-                                     thresh['bias'])
-        self.bias_spl = self.fit_spline(lifted_pr_inl, 
-                                        bias_inl)
+        lifted_pr_inl, bias_inl = self.remove_outliers(
+            lifted_pr, 
+            bias, 
+            thresh['bias']
+        )
+        self.bias_spl = self.fit_spline(
+            lifted_pr_inl, 
+            bias_inl
+        )
+
+        if visualize:
+            plt.scatter(lifted_pr, bias, label = "Raw")
+            plt.scatter(lifted_pr_inl, bias_inl, label = "Inliers")
+            plt.scatter(lifted_pr_inl, self.bias_spl(lifted_pr_inl), label = "Spline fit")
+            plt.legend()
 
         # Standard deviation vs. FPP: Remove outliers and fit a spline
-        lifted_pr_inl, bias_inl = \
-                self.remove_outliers(lifted_pr, 
-                                     bias, 
-                                     thresh['std'])
+        lifted_pr_inl, bias_inl = self.remove_outliers(
+            lifted_pr, 
+            bias, 
+            thresh['std']
+        )
         std = pd.DataFrame(bias_inl).rolling(std_window).std()
         std = std.fillna(method="bfill").fillna(method="ffill").to_numpy()
-        self.std_spl = self.fit_spline(lifted_pr_inl, 
-                                       std,
-                                       k=4)
+        self.std_spl = self.fit_spline(
+            lifted_pr_inl, 
+            std,
+            k=4
+        )
+
+        if visualize:
+            _, axs = plt.subplots(2, 1, sharex = True)
+            axs[0].scatter(lifted_pr, bias, label = "Raw")
+            axs[0].scatter(lifted_pr_inl, bias_inl, label = "Inliers")
+            axs[1].scatter(lifted_pr_inl, std, label = "Raw Std")
+            axs[1].scatter(lifted_pr_inl, self.std_spl(lifted_pr_inl), label = "Spline Std")
+            axs[0].legend()
+            axs[1].legend()
+            
+            plt.show()
 
         # Undo sort
-        lifted_pr_unsorted = lifted_pr[np.argsort(sort_pr)]
+        # lifted_pr_unsorted = lifted_pr[np.argsort(sort_pr)]
 
         # Update the main dataframe with the calibration results
-        self.df['std'] = self.std_spl(lifted_pr_unsorted)
-        self.df['range'] -= self.bias_spl(lifted_pr_unsorted)
-        self.df['bias'] = self.df.apply(
-                                        self._get_bias, 
-                                        axis=1
-                                       )
+        if inplace:
+            self.df = ApplyCalibration.power(
+                self.df, 
+                self.bias_spl,
+                self.std_spl,
+                self.lift,
+            )
+
+        return self.bias_spl, self.std_spl
 
     @staticmethod
     def remove_outliers(
@@ -514,30 +649,11 @@ class UwbCalibrate(PostProcess):
         UnivariateSpline
             The fitted spline.
         """
-        return UnivariateSpline(x, 
-                                y, 
-                                k=k)
-
-    def compute_range_meas(self) -> np.ndarray:
-        """Compute the range measurement based on the timestamp intervals.
-
-        Returns
-        -------
-        np.ndarray
-            Range measurements.
-        """
-        del_t1 = self.df['del_t1']
-        del_t2 = self.df['del_t2']
-        if self.ds_twr:
-            del_t3 = self.df['del_t3']
-            del_t4 = self.df['del_t4']
-            range = 0.5 * self._c / 1e9 * \
-                    (del_t1 - (del_t3 / del_t4) * del_t2)
-        else:
-            range = 0.5 * self._c / 1e9 * \
-                    (del_t1 - del_t2)
-
-        return range
+        return UnivariateSpline(
+            x, 
+            y, 
+            k=k
+        )
 
     def save_calib_results(
         self, 
