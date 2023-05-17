@@ -705,24 +705,23 @@ class PostProcess(object):
         t_ref = time_ref[50]
         d_ref = data_ref[50] 
         for type_id in possible_types:
-            for ts_instance_id in possible_types:
-                if (type_id == 0) and (ts_instance_id == 0):
-                    continue
-                
-                data_iter = data[(types == type_id) & (ts_instances == ts_instance_id)]
-                time_iter = time[(types == type_id) & (ts_instances == ts_instance_id)] 
-                
-                idx = find_nearest_idx(np.array(time_iter), t_ref)
-                d_iter = data_iter[idx]
-                
-                e1 = np.abs(d_iter - d_ref)
-                e2 = np.abs(d_iter + max - d_ref)
-                e3 = np.abs(d_iter - max - d_ref)
-                
-                if np.min([e1,e2,e3]) == e2:
-                    data[(types == type_id) & (ts_instances == ts_instance_id)] += max
-                elif np.min([e1,e2,e3]) == e3:
-                    data[(types == type_id) & (ts_instances == ts_instance_id)] -= max
+            if (type_id == 0):
+                continue
+             
+            data_iter = data[(types == type_id) & (ts_instances == ts_instance_id)]
+            time_iter = time[(types == type_id) & (ts_instances == ts_instance_id)] 
+
+            idx = find_nearest_idx(np.array(time_iter), t_ref)
+            d_iter = data_iter[idx]
+            
+            e1 = np.abs(d_iter - d_ref)
+            e2 = np.abs(d_iter + max - d_ref)
+            e3 = np.abs(d_iter - max - d_ref)
+            
+            if np.min([e1,e2,e3]) == e2:
+                data[(types == type_id)] += max
+            elif np.min([e1,e2,e3]) == e3:
+                data[(types == type_id)] -= max
 
         df["ts"] = data
 
