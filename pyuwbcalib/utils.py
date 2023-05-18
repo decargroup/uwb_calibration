@@ -4,6 +4,7 @@ import pickle
 import numpy as np
 import pandas as pd 
 from scipy.interpolate import interp1d
+from pylie import SO3
 
 def save(obj, filename="file.pickle") -> None:
     """Save object using pickle.
@@ -118,6 +119,44 @@ def get_bias(df) -> float:
             The computed bias.
         """
         return df['range'] - df['gt_range']
+    
+def compute_distance_two_bodies(
+    r_0w_a: np.ndarray,
+    r_1w_a: np.ndarray,
+    C_a0: np.ndarray = SO3.identity(),
+    r_t0_0: np.ndarray = np.zeros(3),
+    C_a1: np.ndarray = SO3.identity(),
+    r_t1_1: np.ndarray = np.zeros(3),
+) -> float:
+    """Compute the distance between two points on rigid bodies with offsets from
+    the body frames' origin.
+
+    Parameters
+    ----------
+    r_0w_a : np.ndarray
+        Position of the rigid body 0's origin in the world frame.
+    r_1w_a : np.ndarray
+        Position of the rigid body 1's origin in the world frame.
+    C_a0 : np.ndarray, optional
+        Orientation of Robot 0 parametrized as a DCM, by default SO3.identity()
+    r_t0_0 : np.ndarray, optional
+        The position of the point on Robot 0 in the body frame, by default np.zeros(3).
+    C_a1 : np.ndarray, optional
+        Orientation of Robot 1 parametrized as a DCM, by default SO3.identity()
+    r_t1_1 : np.ndarray, optional
+        The position of the point on Robot 1 in the body frame, by default np.zeros(3).
+
+    Returns
+    -------
+    float
+        Distance between the two points.
+    """
+    return np.linalg.norm(
+        C_a0 @ r_t0_0
+        + r_0w_a
+        - r_1w_a
+        - C_a1 @ r_t1_1
+    )
     
 def find_nearest_idx(array, value):
     array = np.asarray(array)

@@ -1,7 +1,12 @@
 import numpy as np
 import pandas as pd
 from pylie import SO3
-from .utils import interpolate, get_bias, find_nearest_idx
+from .utils import (
+    interpolate, 
+    get_bias, 
+    find_nearest_idx,
+    compute_distance_two_bodies,
+)
 from .machine import Machine
 from typing import List, Any
 from itertools import product
@@ -467,11 +472,8 @@ class PostProcess(object):
         r_t1_1 = moment_arms[id1]
         
         # Return the distance between the two tags.
-        return np.linalg.norm(
-            C_a0 @ r_t0_0
-            + r_0w_a
-            - r_1w_a
-            - C_a1 @ r_t1_1
+        return compute_distance_two_bodies(
+            r_0w_a, r_1w_a, C_a0, r_t0_0, C_a1, r_t1_1
         )
 
     def _get_pairs(self) -> None:
