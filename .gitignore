@@ -16,8 +16,8 @@ figs
 writeups
 pyuwbcalib/__init__.pyc
 .vscode
-calib_results.pickle
-data.pickle
+calib_results*
+data*
 scripts/.ipynb_checkpoints
 docs/build
 kf_data.pickle

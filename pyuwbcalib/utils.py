@@ -81,6 +81,7 @@ def interpolate(
 
 def compute_range_meas(
     df: pd.DataFrame,
+    max_value: float = 0,
 ) -> np.ndarray:
         """Compute the range measurement based on the timestamp intervals.
 
@@ -94,9 +95,13 @@ def compute_range_meas(
 
         del_t1 = df['rx2'] - df['tx1']
         del_t2 = df['tx2'] - df['rx1']
+        del_t1[del_t1 < 0] += max_value
+        del_t2[del_t2 < 0] += max_value
         if 'tx3' in df.columns:
             del_t3 = df['rx3'] - df['rx2']
             del_t4 = df['tx3'] - df['tx2']
+            del_t3[del_t3 < 0] += max_value
+            del_t4[del_t4 < 0] += max_value
             range = 0.5 * c / 1e9 * \
                     (del_t1 - (del_t3 / del_t4) * del_t2)
         else:

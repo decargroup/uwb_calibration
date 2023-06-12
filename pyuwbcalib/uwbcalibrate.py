@@ -18,14 +18,15 @@ class ApplyCalibration():
         df: pd.DataFrame, 
         delays: Dict[int, float],
         tx_rx_split: Dict[str, float] = {'tx':0.44, 'rx':0.56},
+        max_value: float = 0,
     ) -> pd.DataFrame:
         # Find the delays associated with the ranging tags for every measurement
         from_delay = np.array([delays[x] for x in np.array(df["from_id"])])
         to_delay = np.array([delays[x] for x in np.array(df["to_id"])])
         
         # Correct the intervals # TODO: remove
-        df["del_t1"] += from_delay
-        df["del_t2"] -= to_delay
+        # df["del_t1"] += from_delay
+        # df["del_t2"] -= to_delay
         
         # Compute the individual delays
         tx_from_delay = tx_rx_split['tx'] * from_delay
@@ -45,7 +46,7 @@ class ApplyCalibration():
             df["rx3"] += rx_to_delay
 
         # Correct the range measurements and bias
-        df['range'] = compute_range_meas(df)
+        df['range'] = compute_range_meas(df, max_value)
         df['bias'] = df.apply(
             get_bias, 
             axis=1
@@ -80,6 +81,7 @@ class ApplyCalibration():
         bias_spl,
         std_spl, 
         f_lift = lambda x: 10**((x + 82)/10),
+        max_value: float = 0,
     ):
         # Speed of light
         _c = 299702547 
@@ -94,7 +96,7 @@ class ApplyCalibration():
         df['rx3'] -= bias_spl(lift_fpp2) / _c * 1e9 #TODO: Could read fpp3 in the future?
 
         # Correct the range measurements and bias
-        df['range'] = compute_range_meas(df)
+        df['range'] = compute_range_meas(df, max_value)
         df['bias'] = df.apply(
             get_bias, 
             axis=1
