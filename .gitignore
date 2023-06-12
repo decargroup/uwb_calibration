@@ -21,3 +21,4 @@ data*
 scripts/.ipynb_checkpoints
 docs/build
 kf_data.pickle
+build/
