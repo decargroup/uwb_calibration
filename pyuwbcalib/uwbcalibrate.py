@@ -362,9 +362,30 @@ class UwbCalibrate(PostProcess):
         to_idx = [tags.index(x) for x in np.array(self.df["to_id"])]
         rows = np.linspace(0,n-1,n).astype(int)
         
+        # TODO: shouldn't this be done earlier, and once for all (we redo when computing range)
+        # Correct any wrapped timestamps
+        max_value = self.max_ts_value * self.ts_to_ns
+        del_t1 = self.df['del_t1']
+        del_t2 = self.df['del_t2']
+        while ((del_t1 < 0).any() or (del_t2 < 0).any()) and max_value > 0:
+            del_t1[del_t1 < 0] += max_value
+            del_t2[del_t2 < 0] += max_value
+        while ((del_t1 > max_value).any() or (del_t2 > max_value).any()) and max_value > 0:
+            del_t1[del_t1 > max_value] -= max_value
+            del_t2[del_t2 > max_value] -= max_value
+        if self.ds_twr:
+            del_t3 = self.df['del_t3']
+            del_t4 = self.df['del_t4']
+            while ((del_t3 < 0).any() or (del_t4 < 0).any()) and max_value > 0:
+                del_t3[del_t3 < 0] += max_value
+                del_t4[del_t4 < 0] += max_value
+            while ((del_t3 > max_value).any() or (del_t4 > max_value).any()) and max_value > 0:
+                del_t3[del_t3 > max_value] -= max_value
+                del_t4[del_t4 > max_value] -= max_value
+
         # Compute the clock-skew gain, if using DS-TWR
         if self.ds_twr:
-            K = self.df["del_t3"] / self.df["del_t4"]
+            K = del_t3 / del_t4
         else:
             K = 1
         
@@ -375,8 +396,8 @@ class UwbCalibrate(PostProcess):
         
         # Compute the b column matrix
         b = 1 / self._c * self.df["gt_range"] * 1e9 \
-            - 0.5 * self.df["del_t1"] \
-            + 0.5 * K * self.df["del_t2"]
+            - 0.5 * del_t1 \
+            + 0.5 * K * del_t2
         b = np.array(b)
 
         # Solve for the delays

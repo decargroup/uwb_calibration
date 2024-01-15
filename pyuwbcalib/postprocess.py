@@ -262,7 +262,15 @@ class PostProcess(object):
         
         self._store_pose_data(machines)
         self._store_distance_data()
+
+        # Remove extremely large bias values
+        self.df = self.df[np.abs(self.df['bias']) < 4]
+        self.df.reset_index(inplace=True, drop=True)        
         
+        # Match entries in df_passive with entries in df_uwb
+        self._match_uwb_data()
+        self.df_passive = self.df_passive[self.df_passive['idx'].isin(self.df.index)]
+
         self._get_pairs()
         
         self._unwrap_all_clocks()
@@ -300,9 +308,6 @@ class PostProcess(object):
             self.df_passive = pd.concat(all_dfs_passive)
             self.df_passive.sort_values(by=["time"], inplace=True)
             self.df_passive.reset_index(inplace=True, drop=True)
-            
-            # Match entries in df_passive with entries in df_uwb
-            self._match_uwb_data()
 
     def _match_uwb_data(self):
         """Adds a new "idx" field to df_passive which indicates the row in
