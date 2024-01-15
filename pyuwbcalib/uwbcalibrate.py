@@ -172,6 +172,8 @@ class UwbCalibrate(PostProcess):
         'tag_ids',
         'ds_twr',
         'fpp_exists',
+        'max_ts_value',
+        'ts_to_ns',
     ]
     
     def __init__(
@@ -389,8 +391,16 @@ class UwbCalibrate(PostProcess):
             self.df = ApplyCalibration.antenna_delays(
                 self.df, 
                 self.delays,
-                tx_rx_split
+                tx_rx_split,
+                self.max_ts_value * self.ts_to_ns,
             )
+
+            if self.passive_listening:
+                self.df = ApplyCalibration.antenna_delays_passive(
+                    self.df, 
+                    self.delays,
+                    tx_rx_split,
+                )
 
         return self.delays
 
@@ -589,7 +599,16 @@ class UwbCalibrate(PostProcess):
                 self.bias_spl,
                 self.std_spl,
                 self.lift,
+                self.max_ts_value * self.ts_to_ns,
             )
+
+            if self.passive_listening:
+                self.df = ApplyCalibration.power_passive(
+                    self.df, 
+                    self.bias_spl,
+                    self.std_spl,
+                    self.lift,
+                )
 
         return self.bias_spl, self.std_spl
 
