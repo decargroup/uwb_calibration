@@ -179,11 +179,12 @@ class Machine(object):
                 self.df_uwb[key] = self.df_uwb[value]
                 self.df_uwb.drop(columns=[value], inplace=True)
                 
-        for key in self.passive_fields.keys():
-            if key not in self.df_passive.columns:
-                value = self.passive_fields[key]
-                self.df_passive[key] = self.df_passive[value]
-                self.df_passive.drop(columns=[value], inplace=True)
+        if self.passive_listening:
+            for key in self.passive_fields.keys():
+                if key not in self.df_passive.columns:
+                    value = self.passive_fields[key]
+                    self.df_passive[key] = self.df_passive[value]
+                    self.df_passive.drop(columns=[value], inplace=True)
         
 class RosMachine(Machine):
     """A class to handle ROS machines recording pose and UWB data in rosbags.
