@@ -6,6 +6,7 @@ import pandas as pd
 from scipy.interpolate import interp1d
 from pylie import SO3
 from configparser import ConfigParser
+from scipy.interpolate import UnivariateSpline
 
 def save(obj, filename="file.pickle") -> None:
     """Save object using pickle.
@@ -37,6 +38,59 @@ def load(filename='file.pickle') -> object:
         data = pickle.load(pickle_file)
         
     return data
+
+def merge_calib_results(
+    calib_list: list[dict],
+):
+    """Merge calibration results from multiple calibration runs.
+
+    Parameters
+    ----------
+    calib_list : list[dict]
+        List of calibration results.
+        
+    Returns
+    -------
+    dict
+        The merged calibration results.
+    """
+    
+    final_result = {
+        'delays': {},
+        'bias_spl': {},
+        'std_spl': {},
+    }
+    
+    # First, merge the antenna delays by taking the mean of all the delays
+    for calib in calib_list:
+        for anchor_id in calib['delays']:
+            if anchor_id not in final_result['delays']:
+                final_result['delays'][anchor_id] = []
+            final_result['delays'][anchor_id].append(calib['delays'][anchor_id])
+            
+    for anchor_id in final_result['delays']:
+        final_result['delays'][anchor_id] = np.mean(final_result['delays'][anchor_id])
+        
+    # Second merge the bias_spl by sampling from each spline 
+    # and fitting a spline to the mean of the samples
+    samples_x = np.linspace(0.01, 1.8, 1000)
+    samples_y_list = []
+    for calib in calib_list:
+        samples_y_list.append(calib['bias_spl'](samples_x))
+        
+    samples_y = np.mean(samples_y_list, axis=0)
+    final_result['bias_spl'] = UnivariateSpline(samples_x, samples_y, k=3)
+    
+    # Third, merge the std_spl in a similar way
+    samples_y_list = []
+    for calib in calib_list:
+        samples_y_list.append(calib['std_spl'](samples_x))
+        
+    samples_y = np.mean(samples_y_list, axis=0)
+    final_result['std_spl'] = UnivariateSpline(samples_x, samples_y, k=4)
+        
+    return final_result
+    
 
 def read_anchor_positions(
     parser: ConfigParser,
