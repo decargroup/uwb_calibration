@@ -156,6 +156,7 @@ class PostProcess(object):
     def __init__(
         self, 
         machines,
+        anchors = {},
         merge_pairs = False,
     ) -> None:
         """Constructor
@@ -164,6 +165,11 @@ class PostProcess(object):
         ----------
         machines: list of Machine
             A list of all the Machine objects, one per machine.
+        anchors: dict, optional
+            keys: int
+                The ID of the anchor.
+            values: list
+                The 3D position of the anchor relative to the world frame.
         merge_pairs: bool, optional
             If pairs are merged together irrespective of whom of the pair initiates, 
             by default False
@@ -174,6 +180,7 @@ class PostProcess(object):
             ["rx1", "tx2", "tx3"],
             ["rx1", "rx2", "rx3"],
         ]
+        self.anchors = anchors
         self.merge_pairs = merge_pairs
         self._save_params(machines)    
         self._process_data(machines)
@@ -408,7 +415,7 @@ class PostProcess(object):
         # Compute and store the ground-truth range.
         self.df['gt_range'] = self.df.apply(
             self._compute_distance, 
-            args=(self.tag_ids, self.moment_arms), 
+            args=(self.tag_ids, self.moment_arms, self.anchors), 
             axis=1
         )
 
@@ -423,7 +430,8 @@ class PostProcess(object):
     def _compute_distance(
         row, 
         tag_ids, 
-        moment_arms
+        moment_arms,
+        anchors,
     ) -> float:
         """Compute the distance between two tags at one instant.
 
@@ -444,6 +452,11 @@ class PostProcess(object):
             values: list
                 The 3D position of the tag relative to the machine's reference point,
                 in the machine's body frame.
+        anchors: dict
+            keys: int
+                The ID of the anchor
+            values: list
+                The 3D position of the anchor relative to the world frame.
 
         Returns
         -------
@@ -455,26 +468,42 @@ class PostProcess(object):
         id1 = row['to_id']
         
         # Get the IDs of the machines that have those two tags
-        machine0 = [machine for machine in tag_ids \
+        if id0 not in anchors:
+            machine0 = [machine for machine in tag_ids \
                             if id0 in tag_ids[machine]][0]
-        machine1 = [machine for machine in tag_ids \
+        else:
+            machine0 = 'anchor'
+        if id1 not in anchors:
+            machine1 = [machine for machine in tag_ids \
                             if id1 in tag_ids[machine]][0]
+        else:
+            machine1 = 'anchor'
         
         # Get the pose of the first machine
-        r_0w_a = row['r_iw_a_'+machine0]
-        q_a0 = row['q_ai_'+machine0]
+        if machine0 == 'anchor':
+            r_0w_a = np.zeros(3)
+            q_a0 = np.array([1,0,0,0])
+            # position of anchor relative to world frame
+            r_t0_0 = anchors[id0]
+        else:        
+            r_0w_a = row['r_iw_a_'+machine0]
+            q_a0 = row['q_ai_'+machine0]
+            # position of tag of 1st machine relative to reference point
+            r_t0_0 = moment_arms[id0] 
         C_a0 = SO3.from_quat(q_a0, order='xyzw')
         
-        # Get the position of the tag of the first machine relative to its reference point
-        r_t0_0 = moment_arms[id0]
-        
         # Get the pose of the second machine
-        r_1w_a = row['r_iw_a_'+machine1]
-        q_a1 = row['q_ai_'+machine1]
+        if machine1 == 'anchor':
+            r_1w_a = np.zeros(3)
+            q_a1 = np.array([1,0,0,0])
+            # position of anchor relative to world frame
+            r_t1_1 = anchors[id1]
+        else:
+            r_1w_a = row['r_iw_a_'+machine1]
+            q_a1 = row['q_ai_'+machine1]
+            # position of tag of 2nd machine relative to reference point
+            r_t1_1 = moment_arms[id1]
         C_a1 = SO3.from_quat(q_a1, order='xyzw')
-
-        # Get the position of the tag of the second machine relative to its reference point
-        r_t1_1 = moment_arms[id1]
         
         # Return the distance between the two tags.
         return compute_distance_two_bodies(

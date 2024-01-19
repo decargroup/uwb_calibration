@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd 
 from scipy.interpolate import interp1d
 from pylie import SO3
+from configparser import ConfigParser
 
 def save(obj, filename="file.pickle") -> None:
     """Save object using pickle.
@@ -36,6 +37,25 @@ def load(filename='file.pickle') -> object:
         data = pickle.load(pickle_file)
         
     return data
+
+def read_anchor_positions(
+    parser: ConfigParser,
+):
+    """Read anchor positions from the configuration file.
+    
+    Parameters
+    ----------
+    parser : ConfigParser
+        The configuration parser.
+        
+    Returns
+    -------
+    dict
+        keys: anchor id
+        values: anchor position
+    """
+    anchor_positions = {int(id) : eval(parser['ANCHORS'][id]) for id in parser['ANCHORS']}
+    return anchor_positions
 
 def set_plotting_env() -> None:
     """Set the plotting environment
