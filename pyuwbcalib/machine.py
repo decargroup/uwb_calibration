@@ -86,7 +86,7 @@ class Machine(object):
         # Retrieve IDs and physical information about the machine
         self.machine_id = configs['MACHINES'][str(id)]
         self.tag_ids = eval(configs['TAGS'][str(id)])
-        self.moment_arms = {tag:eval(configs['MOMENT_ARMS'][str(tag)]) for tag in self.tag_ids}
+        self.moment_arms = {tag : eval(configs['MOMENT_ARMS'][str(tag)]) for tag in self.tag_ids}
 
         # Retrieve ROS topic names for the data to be collected
         if is_ros:
@@ -178,8 +178,8 @@ class Machine(object):
                 value = self.uwb_fields[key]
                 self.df_uwb[key] = self.df_uwb[value]
                 self.df_uwb.drop(columns=[value], inplace=True)
-                
-        if self.passive_listening:
+
+        if self.passive_listening:        
             for key in self.passive_fields.keys():
                 if key not in self.df_passive.columns:
                     value = self.passive_fields[key]
