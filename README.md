@@ -64,4 +64,4 @@ The documentation can be compiled using
 The file `docs/build/html/index.html` can then be opened in a web browser.
 
 ## Citation
-
+M. A. Shalaby, C. C. Cossette, J. R. Forbes and J. Le Ny, "Calibration and Uncertainty Characterization for Ultra-Wideband Two-Way-Ranging Measurements," 2023 IEEE International Conference on Robotics and Automation (ICRA), London, United Kingdom, 2023.
