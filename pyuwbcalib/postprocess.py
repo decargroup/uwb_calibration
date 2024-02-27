@@ -747,6 +747,10 @@ class PostProcess(object):
             data_iter = data[(types == type_id) & (ts_instances == ts_instance_id)]
             time_iter = time[(types == type_id) & (ts_instances == ts_instance_id)] 
 
+            # Check if this type has any data
+            if len(data_iter) == 0:
+                continue
+
             idx = find_nearest_idx(np.array(time_iter), t_ref)
             d_iter = data_iter[idx]
             
