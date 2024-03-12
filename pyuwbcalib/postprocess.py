@@ -482,7 +482,7 @@ class PostProcess(object):
         # Get the pose of the first machine
         if machine0 == 'anchor':
             r_0w_a = np.zeros(3)
-            q_a0 = np.array([1,0,0,0])
+            q_a0 = np.array([0,0,0,1])
             # position of anchor relative to world frame
             r_t0_0 = anchors[id0]
         else:        
@@ -495,7 +495,7 @@ class PostProcess(object):
         # Get the pose of the second machine
         if machine1 == 'anchor':
             r_1w_a = np.zeros(3)
-            q_a1 = np.array([1,0,0,0])
+            q_a1 = np.array([0,0,0,1])
             # position of anchor relative to world frame
             r_t1_1 = anchors[id1]
         else:
