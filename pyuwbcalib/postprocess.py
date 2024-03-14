@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from pylie import SO3
+from pymlg import SO3
 from .utils import (
     interpolate, 
     get_bias, 

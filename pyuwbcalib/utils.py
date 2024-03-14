@@ -4,9 +4,10 @@ import pickle
 import numpy as np
 import pandas as pd 
 from scipy.interpolate import interp1d
-from pylie import SO3
+from pymlg import SO3
 from configparser import ConfigParser
 from scipy.interpolate import UnivariateSpline
+from typing import List
 
 def save(obj, filename="file.pickle") -> None:
     """Save object using pickle.
@@ -40,7 +41,7 @@ def load(filename='file.pickle') -> object:
     return data
 
 def merge_calib_results(
-    calib_list: list[dict],
+    calib_list: List[dict],
 ):
     """Merge calibration results from multiple calibration runs.
 
