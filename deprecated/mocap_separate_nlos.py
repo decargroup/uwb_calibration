@@ -7,7 +7,7 @@ from sklearn.ensemble import RandomForestClassifier
 import pandas as pd
 from scipy.spatial import ConvexHull
 from scipy.spatial.transform import Rotation as R
-from pylie import SO3 
+from pymlg import SO3 
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
