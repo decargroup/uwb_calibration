@@ -15,6 +15,7 @@ setuptools.setup(
     packages=setuptools.find_packages(),
     install_requires=[
         'bagpy',
+        "pymlg @ git+https://github.com/decargroup/pymlg@main",
     ],
     classifiers=[
         "Programming Language :: Python :: 3",
